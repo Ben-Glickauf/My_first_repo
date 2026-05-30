@@ -113,9 +113,116 @@ fit$rank
 ```
 
 
-```{r}
+# if/then/else
 
+
+Fizz buzz challenge
+
+- take in a number
+- if it's divisible by 3 return fizz
+- if it's divisible by 5 return buzz
+- if it's divisible by 15 return fizz buzz
+
+```{r}
+number <- 7
+
+if((number %% 15) == 0) {
+  print("fizz buzz")
+} else if((number %% 5) == 0) {
+  print("buzz")
+} else if((number %% 3) == 0) {
+  print("fizz")
+} else {
+  print("error")
+}
+  
+  
+#if(!(number %% 15))
 ```
+
+
+# Loops
+
+Wrap the fizz buzz code into a loop to check multiple values at once
+
+```{r}
+for(number in -1:15) {
+  if((number %% 15) == 0) {
+  print("fizz buzz")
+  } else if((number %% 5) == 0) {
+    print("buzz")
+  } else if((number %% 3) == 0) {
+    print("fizz")
+  } else {
+    print("error")
+  }
+}
+```
+
+# Writing Functions
+
+Normal approximation to the binomial
+
+```{r}
+n <- 40
+p <- .3
+
+#probabilities from a binomial RV
+dbinom(0:40, size = n, prob = p)
+
+#plot 
+plot(x = 0:n, y = dbinom(0:40, size = n, prob = p), type = 'h')
+
+norm_x <- seq(from = 0, to = n, length = 1000)
+lines(norm_x, dnorm(norm_x, mean = n*p, sd = sqrt(n*p*(1-p))))
+```
+
+
+Lets write a function to make this plot for any `n` and `p`
+
+```{r}
+plot_normApprox <- function(n,p) {
+  
+#plot 
+  plot(x = 0:n, y = dbinom(0:n, size = n, prob = p), type = 'h')
+
+  norm_x <- seq(from = 0, to = n, length = 1000)
+  lines(norm_x, dnorm(norm_x, mean = n*p, sd = sqrt(n*p*(1-p))))
+}
+```
+
+
+Test it out
+
+```{r}
+plot_normApprox(30, 0.5)
+```
+
+
+Add some default values
+
+```{r}
+plot_normApprox <- function(n = 30, p = 0.5) {
+  
+#plot 
+  plot(x = 0:n, y = dbinom(0:n, size = n, prob = p), type = 'h')
+
+  norm_x <- seq(from = 0, to = n, length = 1000)
+  lines(norm_x, dnorm(norm_x, mean = n*p, sd = sqrt(n*p*(1-p))))
+}
+```
+
+
+Test it
+
+```{r}
+plot_normApprox()
+plot_normApprox(p = .1)
+```
+
+
+
+
 
 
 
