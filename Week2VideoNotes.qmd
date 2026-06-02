@@ -1,6 +1,6 @@
 ---
 title: "R Objects, Workflow, and Functions"
-format: html
+format: pdf
 editor: visual
 editor_options: 
   chunk_output_type: inline
@@ -15,6 +15,8 @@ set.seed(42)
 my_unif <- runif(30)
 is.vector(my_unif)
 ```
+
+
 
 
 Subset that object
