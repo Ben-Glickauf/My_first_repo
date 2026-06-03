@@ -15,7 +15,7 @@ air_quality_data
 air_quality_data$`CO(GT)`[1:10]
 ```
 
-# Reading in a Fixed Field File
+# Reading in a Fixed Width Field (FWF) File
 
 ```{r}
 help("read_fwf")
@@ -23,4 +23,90 @@ cigarettes_data <- read_fwf("https://www4.stat.ncsu.edu/online/datasets/cigarett
 cigarettes_data
 ```
 
+# Manipulating Data with `dplyr`
+
+```{r}
+library(readr)
+air_quality_data<- read_csv("https://www4.stat.ncsu.edu/online/datasets/AirQuality.csv")
+#View(air_quality_data)
+```
+
+Manipulate this data and clean it up a bit
+
+```{r}
+air_quality_data |>
+  select(-starts_with("...")) |>
+  rename("co_gt" = `CO(GT)`,
+         "pt_08_sq_co" = `PT08.S1(CO)`,
+         "nmhc_gt" = `NMHC(GT)`,
+         "c6h6_gt" = `C6H6(GT)`,
+         "pt_08_s2_nmhc" = `PT08.S2(NMHC)`,
+         "nox_gt" = `NOx(GT)`,
+         "pt_08_s3_nox" = `PT08.S3(NOx)`,
+         "no2_gt" = `NO2(GT)`,
+         "pt_08_s4_no2" = `PT08.S4(NO2)`,
+         "pt_08_s5_o3" = `PT08.S5(O3)`) |>
+  filter(co_gt != -200) |>
+  mutate(mean_co_gt = mean(co_gt, na.rm = TRUE)) |>
+  View()
+```
+
+Now do the same creation of a new variable, but do it for multiple numeric variables using `across()`
+
+```{r}
+air_quality_data |>
+  select(-starts_with("...")) |>
+  rename("co_gt" = `CO(GT)`,
+         "pt_08_sq_co" = `PT08.S1(CO)`,
+         "nmhc_gt" = `NMHC(GT)`,
+         "c6h6_gt" = `C6H6(GT)`,
+         "pt_08_s2_nmhc" = `PT08.S2(NMHC)`,
+         "nox_gt" = `NOx(GT)`,
+         "pt_08_s3_nox" = `PT08.S3(NOx)`,
+         "no2_gt" = `NO2(GT)`,
+         "pt_08_s4_no2" = `PT08.S4(NO2)`,
+         "pt_08_s5_o3" = `PT08.S5(O3)`) |>
+  filter(co_gt != -200) |>
+  mutate(across(where(is.numeric), mean, .names = "mean_{.col}")) |>
+  View()
+```
+
+```{r}
+air_quality_data |>
+  select(-starts_with("...")) |>
+  rename("co_gt" = `CO(GT)`,
+         "pt_08_sq_co" = `PT08.S1(CO)`,
+         "nmhc_gt" = `NMHC(GT)`,
+         "c6h6_gt" = `C6H6(GT)`,
+         "pt_08_s2_nmhc" = `PT08.S2(NMHC)`,
+         "nox_gt" = `NOx(GT)`,
+         "pt_08_s3_nox" = `PT08.S3(NOx)`,
+         "no2_gt" = `NO2(GT)`,
+         "pt_08_s4_no2" = `PT08.S4(NO2)`,
+         "pt_08_s5_o3" = `PT08.S5(O3)`) |>
+  filter(co_gt != -200) |>
+  mutate(across(where(is.numeric), list(mean = mean, sd = sd), .names = "{.col}_{.fn}")) |>
+  View()
+```
+
+Add in grouping functionality with `group_by()`
+
+```{r}
+air_quality_data |>
+  select(-starts_with("...")) |>
+  rename("co_gt" = `CO(GT)`,
+         "pt_08_sq_co" = `PT08.S1(CO)`,
+         "nmhc_gt" = `NMHC(GT)`,
+         "c6h6_gt" = `C6H6(GT)`,
+         "pt_08_s2_nmhc" = `PT08.S2(NMHC)`,
+         "nox_gt" = `NOx(GT)`,
+         "pt_08_s3_nox" = `PT08.S3(NOx)`,
+         "no2_gt" = `NO2(GT)`,
+         "pt_08_s4_no2" = `PT08.S4(NO2)`,
+         "pt_08_s5_o3" = `PT08.S5(O3)`) |>
+  filter(co_gt != -200) |>
+  group_by(Date) |>
+  mutate(across(where(is.numeric), list(mean = mean, sd = sd), .names = "{.col}_{.fn}")) |>
+  View()
+```
 
