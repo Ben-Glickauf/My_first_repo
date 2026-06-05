@@ -487,3 +487,102 @@ chicago_data |>
   unite(col = "season_date", season, date, sep = ": ") |>
   select(season_date, everything())
 
+
+
+
+### Databases and Basic SQL
+
+## Databases Systems
+
+
+# There are many common types of relational databases management systems (RDBMS)
+
+# Most of these RDBMS have their own Structured Query Language (SQL) that provides a language for getting information from tables in the database. The SQL languages have the same core functionality and syntax that is vital to learn as a data scientist!
+
+
+
+## Databases in R: Connecting
+
+# The first step in dealing with a database is to connect your R session to it so you can do your CRUD actions. To connect we use the DBI package. The dbConnect() function allows us to connect to a database. Here is some generic code for using that function:
+
+library(DBI)
+con <- dbConnect(data_base_type_goes_here_usually_requires_a_package, 
+                 host = "hostname.website",
+                 user = "username",
+                 password = rstudioapi::askForPassword("DB password")
+)
+
+# This code tellsR where the connection exists (host) and, if you need to login to gain access, the way in which you could specify your username and password.
+
+# The first argument specifies the type of database you are connecting to. Most commonly you’ll need to download an appropriate package and put something like the following:
+  
+  # RSQLite::SQLite() for RSQLite
+  # RMySQL::MySQL() for RMySQL
+  # RPostgreSQL::PostgreSQL() for RPostgreSQL
+  # odbc::odbc() for Open Database Connectivity
+  # bigrquery::bigquery() for google’s bigQuery
+
+
+
+## Databases in R: Querying a Table
+
+# Once connect, you can use tbl() to reference a table in the database. Notice our first argument is the connection we made above.
+new_data <- tbl(con, "name_of_table")
+
+# We can then use SQL code or dplyr code (which actually calls code from a package called dbplyr) to query things.
+
+
+## Databases in R: Ending Your Connection
+
+# When done working, it is good practice to disconnect from the database via the dbDisconnect() function.
+dbDisconnect(con)
+
+
+
+## Databases Example
+library(DBI)
+con <- dbConnect(RSQLite::SQLite(), "https://www4.stat.ncsu.edu/~online/datasets/lahman.db")
+
+# First, let’s list out the tables with DBI::dbListTables()
+dbListTables(con)
+
+# Great, now we can access one of these tables with the dplyr::tbl() function. From there, we can use all our usual dplyr code in place of SQL syntax!
+library(dplyr)
+tbl(con, "Pitching")
+
+tbl(con, "Pitching") |>
+  select(ends_with("ID")) |>
+  filter(yearID == 2010) 
+
+
+# Notice the number of rows isn’t actually calcuated here! This is called lazy evaluation. Until we store the result in an object or do some calculation that requires all of the rows, it won’t do the computation.
+
+# How dplry works with a database
+
+  # It never pulls data intoR unless you explicitly ask for it
+
+  # It delays doing any work until the last possible moment - it collects together everything you want to do      and then sends it to the database in one step (you can add collect() if you want all the data anyway)
+
+tbl(con, "Pitching") |>
+  select(ends_with("ID")) |>
+  filter(yearID == 2010) |>
+  collect()
+
+# We can actually get out some SQL code from our dplyr code if we use show_query()
+
+tbl(con, "Pitching") |>
+  select(ends_with("ID")) |>
+  filter(yearID == 2010) |>
+  show_query()
+
+# That’s cool! If you have the logic of dplyr down you can just use that but also learn SQL syntax along the way!
+
+# You can actually write straight SQL code as well (if you know that):
+
+#tbl(con, sql(
+#  "SELECT `playerID`, `yearID`, `teamID`, `lgID`
+# FROM `Pitching`
+# WHERE (`yearID` = 2010.0)"))
+
+dbDisconnect(con)
+

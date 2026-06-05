@@ -110,3 +110,111 @@ air_quality_data |>
   View()
 ```
 
+
+# Reading From a Database
+
+
+```{r}
+# need the bigquery
+library(DBI)
+library(tidyverse)
+
+con <- dbConnect(
+  bigrquery::bigquery(),
+  project = "bigquery-public-data",
+  dataset = "google_trends",
+  billing = "st-558-498519"
+)
+
+dbListTables(con)
+
+my_data <- tbl(con, "top_terms") |>
+  select(refresh_date, term, rank, dma_id, dma_name) |>
+  rename("Day" = "refresh_date", 
+         "Top_Term" = "term") |>
+  filter(rank == 1,
+         Day > lubridate::as_date('2024-05-14'),
+         dma_id == 500) |>
+  collect()
+```
+
+
+# SQL Joins
+
+```{r}
+library(DBI)
+library(tidyverse)
+con <- dbConnect(RSQLite::SQLite(), "lahman.db")
+dbListTables(con)
+```
+
+Combine the `Batting` table and the `Pitching` table on common variables
+
+```{r}
+#note this code differs slightly from what was in the video!
+inner_join(tbl(con, "Batting") |> filter(yearID == 2000), 
+           tbl(con, "Pitching") |> filter(yearID == 2000),
+           by = c("playerID", "stint", "teamID", "lgID")) |>
+  collect()
+```
+
+
+Can Write SQL code instead
+
+```{r}
+tbl(con, sql(
+"SELECT p.playerID as pplayerID,
+        p.stint as pstint,
+        p.teamID as pteamID,
+        p.lgID as plgID,
+        p.G as pG,
+        p.HR as pHR,
+        p.BB as pBB,
+        p.SO as pSO,
+        p.HBP as pHBP,
+        p.R as pR,
+        p.SF as pSF,
+        p.GIDP as pGIDP,
+        p.IBB as pIBB,
+        p.SH as pSH,
+        p.W, p.L, p.GS, p.CG, p.SHO, p.SV, p.IPouts, p.ER, p.BAopp, 
+        p.ERA, p.WP, p.BK, p.BFP, p.GF,
+        b.*
+FROM Pitching as p
+INNER JOIN Batting as b on ((p.playerID = b.playerID) AND (pstint = b.stint) AND (pteamID = b.teamID) AND (plgID = b.lgID))
+WHERE b.yearID = 2000 AND p.yearID = 2000"
+))
+```
+
+
+Left join returns left table and matching right records
+
+```{r}
+left_join(tbl(con, "Batting") |> filter(yearID == 2000), 
+           tbl(con, "Pitching") |> filter(yearID == 2000),
+           by = c("playerID", "stint", "teamID", "lgID")) |>
+  collect() |>
+  select(playerID, ERA, everything())
+```
+
+Right join
+
+```{r}
+right_join(tbl(con, "Batting") |> filter(yearID == 2000),
+           tbl(con, "Pitching") |> filter(yearID == 2000),
+           by = c("playerID", "stint", "teamID", "lgID")) |>
+  collect() |>
+  select(playerID, ERA, everything())
+```
+
+
+Outer Join: All players are in the Batting table even if they have no at bats!
+
+```{r}
+full_join(tbl(con, "Batting") |> filter(yearID == 2000),
+           tbl(con, "Pitching") |> filter(yearID == 2000),
+           by = c("playerID", "stint", "teamID", "lgID")) |>
+  collect()
+```
+
+
