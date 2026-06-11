@@ -1,0 +1,110 @@
+---
+title: "Week4VideoNotes"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+# Querying APIs
+
+```{r}
+library(tidycensus) #install first!
+
+rent <- "DP04_0142PE" #PE means percentage
+rent_data <- get_acs(variables = rent,
+ geography = "county",
+ geometry = TRUE,#returns the polygon data and allows for maps easily
+ survey = "acs5",
+ show_call = TRUE,
+ key = "e267f117801b2ef741e54620602b0903c5f4d3c8"
+ ) #can add state and other things
+```
+
+```{r}
+#install mapview
+rent_data |>
+ mapview::mapview(zcol = "estimate",
+ layer.name = "Median rent as a % of gross income")
+```
+
+Ok, what is going on with the `get_acs()` function?
+
+- It calls `load_data_acs()` which builds the URL for us!
+- Note this doesn't run
+
+```{r}
+load_data_acs <- function(geography, formatted_variables, key, year, state = NULL,
+                          county = NULL, zcta = NULL, survey, show_call = FALSE) {
+  base <- paste("https://api.census.gov/data",
+  as.character(year), "acs",
+  survey, sep = "/")
+  if (grepl("^DP", formatted_variables)) {
+    message("Using the ACS Data Profile")
+    base <- paste0(base, "/profile")
+  }
+```
+
+Let's build an API our self
+
+Process:
+
+- Build the appropriate URL
+
+- Use `httr:GET()` to contact the web site
+
+- Data is usually JSON (or possibly XML). Parse it!
+
+- Try to put into a data frame
+
+![jsonlite Package](PackageSrnshot.png)
+
+### Build the URL
+
+![Building the URL](BuildURLSrnshot.png)
+
+```{r}
+URL_ids <- "https://api.nhle.com/stats/rest/en/team"
+
+id_info <- httr::GET(URL_ids)
+str(id_info, max.level = 1)
+```
+
+Must parse this a bit... Usually data is in `content` or `results` element
+
+- Often use `rawToChar()` with `jsonlite::fromJSON()`
+
+```{r}
+library(jsonlite)
+library(dplyr)
+parsed <- fromJSON(rawToChar(id_info$content))
+team_info <- as_tibble(parsed$data)
+team_info
+```
+
+Now we can get some team stats through the same process!
+
+![Build the URL](URLSrnshot.png)
+
+
+A few things can be modified but it isn't clear here what the values could be.
+
+```{r}
+URL_team_stats <- "https://api.nhle.com/stats/rest/en/team/summary?sort=wins&cayenneExp=seasonId=20232024%20and%20gameTypeId=2"
+```
+
+`GET()` it and parse it with the same process
+
+```{r}
+team_stats_return <- httr::GET(URL_team_stats)
+parsed_team_stats <- fromJSON(rawToChar(team_stats_return$content))
+team_stats <- as_tibble(parsed_team_stats$data)
+```
+
+Check it out
+
+```{r}
+team_stats |>
+ select(teamId, teamFullName, everything())
+```
+
