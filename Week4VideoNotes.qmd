@@ -13,12 +13,11 @@ library(tidycensus) #install first!
 
 rent <- "DP04_0142PE" #PE means percentage
 rent_data <- get_acs(variables = rent,
- geography = "county",
- geometry = TRUE,#returns the polygon data and allows for maps easily
- survey = "acs5",
- show_call = TRUE,
- key = "e267f117801b2ef741e54620602b0903c5f4d3c8"
- ) #can add state and other things
+  geography = "county",
+  geometry = TRUE,#returns the polygon data and allows for maps easily
+  survey = "acs5",
+  show_call = TRUE,
+  key = "e267f117801b2ef741e54620602b0903c5f4d3c8") #can add state and other things
 ```
 
 ```{r}
@@ -428,14 +427,12 @@ g + geom_bar()
 ```{r}
 g <- ggplot(data = app_data |> drop_na(SexF), aes(x = SexF))
 
-g + geom_bar() 
-  + labs(x = "Sex")
+g + geom_bar() + labs(x = "Sex")
 ```
 
 ```{r}
 g <- ggplot(data = app_data |> drop_na(SexF, DiagnosisF), aes(x = SexF, fill = DiagnosisF))
-g + geom_bar()
-  + labs(x = "Sex")
+g + geom_bar() + labs(x = "Sex")
 ```
 
 ```{r}
@@ -461,7 +458,6 @@ ggplot(data = app_data |> drop_na(SexF, DiagnosisF), aes(x = SexF, fill = Diagno
 ggplot(data = app_data |> drop_na(SexF, DiagnosisF), aes(x = SexF)) +
  geom_bar(aes(fill = DiagnosisF))
 ```
-
 
 ```{r}
 #all local
@@ -522,9 +518,7 @@ ggplot(data = app_data |> drop_na(SexF, DiagnosisF), aes(x = SexF, fill = Diagno
   scale_fill_discrete("Diagnosis")
 ```
 
-
-`position = fill` stacks bars and standardizes each stack to have constant `height`
-(especially useful with equal group sizes)
+`position = fill` stacks bars and standardizes each stack to have constant `height` (especially useful with equal group sizes)
 
 ```{r}
 ggplot(data = app_data |> drop_na(SexF, DiagnosisF), aes(x = SexF, fill = DiagnosisF)) +
@@ -532,7 +526,6 @@ ggplot(data = app_data |> drop_na(SexF, DiagnosisF), aes(x = SexF, fill = Diagno
  labs(x = "Sex")+
  scale_fill_discrete("Diagnosis")
 ```
-
 
 # Numeric Variables and Graphs with `ggplot2`
 
@@ -551,14 +544,12 @@ app_data <- app_data |>
 app_data
 ```
 
-
 ### Desnity Plots
 
 ```{r}
 g <- ggplot(app_data |> drop_na(RBC_Count), aes(x = RBC_Count))
 g + geom_density()
 ```
-
 
 Remove really large value and use the `fill` aesthetic to compare groups
 
@@ -606,7 +597,6 @@ g <- ggplot(app_data |> drop_na(RBC_Count, Diagnosis) |> filter(RBC_Count < 8),
 g + geom_jitter(width = 0.2, alpha = 0.3) +
  geom_boxplot()
 ```
-
 
 Violin plot similar to boxplot
 
@@ -664,7 +654,6 @@ g + geom_point(aes(x = Weight, y = RBC_Count, color = Diagnosis)) +
  label = paste0(correlation[2,1], " correlation: ", round(correlation[2,2], 2)))
 ```
 
-
 ### Faceting
 
 Suppose we want to take one of our plots and produce similar plots across another variable!
@@ -677,7 +666,6 @@ ggplot(data = app_data |> drop_na(SexF, DiagnosisF), aes(x = SexF, fill = Diagno
   labs(x = "Sex")+
   scale_fill_discrete("Diagnosis")
 ```
-
 
 `facet_wrap(~ var)` - creates a plot for each setting of `var`
 
@@ -771,4 +759,3 @@ gif <- ggplot(gapminder, aes(gdpPercap, lifeExp, size = pop, colour = country)) 
 
 # anim_save(filename = "img/myGif.gif", animation = gif, renderer = gifski_renderer())
 ```
-
