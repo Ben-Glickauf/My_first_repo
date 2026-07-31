@@ -1,0 +1,455 @@
+---
+title: "Week11Notes"
+format: html
+---
+
+# Creating an API with R
+
+# APIs and Docker
+
+APIs - a defined method for asking for information from a computer
+
+- Useful for getting data
+
+- Useful for allowing others to run your code and produce something
+
+Docker - a 'container' to easily transport your code to others
+
+- Include all relevant files (R, packages, etc.)
+
+Ideas important for putting work into pipeline!
+
+# Implementing a Model in Production
+
+Need a way to make your model available to others
+
+- Can write an API that accesses your model
+
+- Not traditionally done in R!
+
+- Often done in python or lower level language
+
+- Can be done using the `plumber` package
+
+# API Basics
+
+`plumber` allows us to build a *REST API*
+
+- Takes in an HTTP request from a client and outputs a response
+
+  - Request and responses are specifically formatted
+
+# `plumber` Package
+
+Package creates API by you **decorating** your code with appropriate comments
+
+- `#*`
+
+Ex: Standard R function to paste a message together with comments prior
+
+```{r}
+#Send a message
+#* @get /readme
+function(){
+  "This is our basic API"
+}
+#http://localhost:8000/readme
+```
+
+Let's try the template `plumber` file from RStudio!
+
+- Endpoints are the logic defining what is returned from a request
+
+- `@get`: a get request, specified by providing something like `/echo`
+
+- Inputs are taken as strings by default
+
+```{r}
+#* Find natural log of a number
+#* @param num Number to find ln of
+#* @get /ln
+function(num){
+  log(as.numeric(num))
+}
+#http://localhost:PORT/ln?num=1
+```
+
+Another example of syntax
+
+```{r}
+#* Find multiple of two numbers
+#* @param num1 1st number
+#* @param num2 2nd number
+#* @get /mult
+function(num1, num2){
+  as.numeric(num1)*as.numeric(num2)
+}
+#http://localhost:PORT/mult?num1=10&num2=20
+```
+
+Output is generally in JSON format
+
+Can alter that:
+
+- for HTML (\@serializer html)
+
+- for PNG (\@serializer png), for JPEG (\@serializer jpeg)
+
+- for htmlwidget (\@serializer htmlwidget)
+
+Plot output as png
+
+```{r}
+#* Plot of iris data
+#* @serializer png
+#* @param type base or ggally
+#* @param color TRUE or FALSE (only for ggally)
+#* @get /plotiris
+function(type = "base", color = FALSE){
+  if(tolower(type) == "ggally"){
+    if(color){
+      a <- GGally::ggpairs(iris, aes(color = Species))
+      print(a)
+    } else {
+      a <- GGally::ggpairs(iris)
+      print(a)
+    }
+  } else {
+    pairs(iris)
+  }
+}
+#http://localhost:PORT/plotiris?type=base
+```
+
+- HTML widget as output
+
+```{r}
+#* Plotting widget
+#* @serializer htmlwidget
+#* @param lat latitude
+#* @param lng longitude
+#* @get /map
+function(lng = 174.768, lat = -36.852){
+  m <- leaflet::leaflet() |>
+    addTiles() |>  # Add default OpenStreetMap map tiles
+    addMarkers(as.numeric(lng), as.numeric(lat))
+  m  # Print the map
+}
+#http://localhost:PORT/map?lng=174&lat=-36
+```
+
+# Basic API Process
+
+- Create your R functions
+
+- Load the `plumber` library
+
+- Put them into a file to source with the `plumb` function (or use RStudio's button)
+
+- Code way:
+
+```{r}
+library(plumber)
+r <- plumb("API/myAPI.r")
+r$run(port = 8000)
+#is hosted at http://localhost:8000
+```
+
+# Recap
+
+- Create our API via `plumber` package
+
+- Decorate code with specific comments
+
+- [Many other things](https://www.rplumber.io/) can be done we didn't cover!
+
+# Docker Basics
+
+# Docker Containers
+
+Docker - a 'container' to easily transport your code/program to others
+
+- Includes all relevant files (specific python install, specific packages, etc.)
+
+- No chance of surprise bugs!
+
+Run on a linux kernel
+
+- `Dockerfile` specifies how to build a docker **image**
+
+- Once built, you can run or deploy the image, creating a container
+
+We'll just use pre-built images and run them locally on our machine!
+
+# Steps to Using Docker
+
+1.  Install docker desktop
+
+2.  Download (pull) a base image
+
+    - We'll use the `r-base` image to start
+
+3.  Run the image to create a container
+
+    - We'll do this locally via the command line (or terminal)!
+
+    - Usually deploy containers on a cloud (like AWS).
+
+    - Often done user a container management system like kubernetes
+
+4.  Shut down the container
+
+# 1. Installing Docker
+
+Go to [Docker's website](https://docs.docker.com/get-docker/) to install `docker desktop`
+
+- Once installed, open docker desktop (may take a few minutes to load)
+
+- Open a **terminal**
+
+  - Windows: Type `cmd` into your start menu
+
+  - Mac: Go to Launchpad and type `terminal`
+
+- Type `docker --version` and hit enter
+
+- Type `docker run hello-world` and hit enter
+
+# 2. Download a Docker Image
+
+What's happening there?
+
+Docker looks for an image called `hello-world` locally
+
+- Didn't find it, downloads it from **docker hub**
+
+- Runs a container (instance of that image) that prints its message to you
+
+Download our image of interest via
+
+- `docker pull r-base`
+
+- Will take a minute to download! Once done
+
+# 3/4. Creating our Container
+
+- To run our image we can use `docker run _image_`
+
+  - Open command prompt (with docker desktop running)
+
+  - Submit `docker run -ti --rm r-base` to the console
+
+  - `--rm` says remove the container when we close it
+
+# Launch RStudio via Docker
+
+- Let's go through an example where we load RStudio through docker!
+
+Steps:
+
+- Grab `rocker/rstudio` image
+
+- Create container with
+
+`docker run --rm -ti -e DISABLE_AUTH=true -p 127.0.0.1:8888:8888 rocker/rstudio`
+
+- Use CTRL/CMD + C, `docker kill _container_name_`, or docker desktop to stop the container
+
+<!-- -->
+
+- May want [additional functionality via options](https://docs.docker.com/engine/reference/commandline/run/)! To access a local directory, we can mount the current working directory of our terminal:
+
+  - (Windows via command prompt)\
+    `docker run --rm -ti -e DISABLE_AUTH=true -p 127.0.0.1:8888:8888 %cd%:/home/rstudio/work rocker/rstudio`
+
+  - (Mac via terminal)\
+    `docker run --rm -ti -e DISABLE_AUTH=true -p 127.0.0.1:8888:8888 -v ${PWD}:/home/rstudio/work rocker/rstudio`
+
+    - `-ti` allows us to run commands inside the container
+
+    - `-p 127.0.0.1:8888:8888` exposes a port so we can access things via the browser
+
+    - `-v path_to_folder:/home/rstudio/work` mounts a local folder for us to use in the container
+
+    - `--rm` removes the container when we exit
+
+    - `-e` sets an environment variable (so we don't have to log in)
+
+## Useful Command Line Commands
+
+- `cd` - change directory
+
+- `cd ..` - move up a folder
+
+- `ls` - list files in current directory
+
+- `start .` or `open .` - open a folder view in your current directory
+
+- `touch file_name.ext` - create a new file
+
+- lots more!
+
+## Useful Docker Commands to Know
+
+- `docker pull _image_` - Download an image
+
+- `docker image ls` - Check which images you have
+
+- `docker run _image_` - Create an instance of the image (a container)
+
+- `docker container ls` - Check which containers are currently running
+
+- `docker kill _container_` - Stop a currently running container
+
+# Recap
+
+To avoid install issues when sharing software, we'll use everything through a docker container!
+
+Common steps:
+
+- Start docker desktop (wait for it to fully start!)
+
+- `docker run ...`
+
+- Open our web browser to the appropriate place
+
+- Close command prompt/terminal to shut down container
+
+# Building a Docker Image
+
+# Docker
+
+Suppose we want to build our own image!
+
+- Need to create a `Dockerfile` telling Docker how to build our image
+
+Let's create our API as a docker image
+
+- First, create a directory for the relevant files/scripts
+
+- Second, create a file called `Dockerfile` (no file extension) in that folder
+
+Describes how to build the image
+
+`FROM rstudio/plumber`
+
+`RUN apt-get update -qq && apt-get install -y libssl-dev libcurl4-gnutls-dev libpng-dev libpng-dev pandoc`
+
+`RUN R -e "install.packages(c('GGally', 'leaflet', 'plumber'))"`
+
+`COPY myAPI.R myAPI.R`
+
+`EXPOSE 8000`
+
+`ENTRYPOINT ["R", "-e", \`\
+`"pr <- plumber::plumb('myAPI.R'); pr$run(host='0.0.0.0', port=8000)"]`
+
+# Build the Image
+
+We now build the image
+
+- Change your terminal's working directory to your folder with the dockerfile
+
+Now build it: `docker build -t api .`
+
+- `build` is telling docker we want to create an image
+
+- `-t` indicates we are providing a name
+
+- `api` is the name, `.` implies we are in the directory we want to build from
+
+# Run the Container
+
+Now we have the image, we use `docker run` to start it up!
+
+`docker run --rm -p 8000:8000 api`
+
+- `--rm` says remove the image when done
+
+- `-p` gives docker access to our port
+
+- `8000:8000` ports available to use (only 8000)
+
+- `api` name of the image to run
+
+# Other Things to Note
+
+Should make sure things aren't still running once we stop using it
+
+- `docker container ls` shows what containers are running
+
+- `docker kill __name__` stops them
+
+Can delete a container with `docker rm`
+
+- `docker rm NAME`
+
+When rebuilding, sometimes you don't want to use the cached builds
+
+- `docker build -t NAME --no-cache`
+
+Can export container with `docker export` (or image with `docker save`)!
+
+- `docker export CONTAINER_NAME path.tar`
+
+Can remove images with `docker rmi`
+
+- `docker rmi -f ID`
+
+# Recap
+
+- We can build our own images!
+
+- Create a `Dockerfile` and instruct it on what to do
+
+- Need to Google some linux commands and do some troubleshooting!
+
+# Dockerizing a Shiny App
+
+# Docker
+
+Recap
+
+- You have a model, app, etc.
+
+- You want to share it or make it available
+
+Docker - a 'container' to easily transport your code to others
+
+- Include all relevant files (R, packages, etc.)
+
+- No chance of code not running, bugs, etc. (if you've done things right!)
+
+# Dockerizing Shiny Apps
+
+[Article 1](https://juanitorduz.github.io/dockerize-a-shinyapp/) and [Article 2](https://www.statworx.com/en/blog/how-to-dockerize-shinyapps/) on commands needed to Dockerize a shiny app
+
+- If you can host your app somewhere, not really a need to dockerize...
+
+# Dockerizing a Shiny App
+
+- Create app in a folder with all files needed (images, etc)
+
+  - All paths relative!
+
+- Pull appropriate docker image
+
+  - `docker pull rocker/shiny-verse`
+
+- Create the `DOCKERFILE`
+
+- Build the image
+
+  - `docker build -t <NAME> <DOCKERFILE PATH>`
+
+  - If in directory of `DOCKERFILE`, just put '.' for path
+
+- Deploy the image
+
+  - Ex: `docker run -p 3838:3838 <NAME>`
+
+# Example Dockerization
+
+Let's Dockerize a basic app
+
+- An app to visualize bayes theorem

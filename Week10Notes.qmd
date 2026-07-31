@@ -1,0 +1,1866 @@
+---
+title: "Week10Notes"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+# **LASSO Models**
+
+Published
+
+2026-07-08
+
+We’ve seen that using a training/test split can give us a way to judge our model’s effectiveness on data it wasn’t trained on.
+
+Alternatively, we’ve seen that cross-validation can be used to judge our model’s effectiveness without doing the training/test split. We might do this if we have a smaller data set.
+
+**A third option is to use both CV and a training/test split.** We might do this if we had a number of different *classes* or *families* of models we were fitting. We could use CV on the training data only to choose the best from each family. We refit each of those ‘best’ models on the full training data. Then we could compare those ‘best’ models from each class on the test set to select our final best model! (We would then refit that model to the entire data set.)
+
+For instance, we might have the following families of models:
+
+- MLR models (say some with interactions, some without)
+
+- A LASSO model (type of MLR model with penalization)
+
+- A random forest model (studied later)
+
+- A kNN (k nearest neighbor) model (we won’t study this one)
+
+The latter three model types all have **tuning** parameters that must be selected when fitting the model. CV on the training set is often used to select those tuning parameters! We can also use CV on the training set to determine the best MLR model (or use some other model selection technique).
+
+Using this process, we would get a best model of each type (or family) using the training set only. Then we refit those models on the full training data and can compare the best model from each family of models on the test set to select an overall best model!
+
+Let’s introduce the LASSO model and then use CV (on the training set) to select the tuning parameter. We’ll similarly compare some competing MLR models using CV on the training set. Once we have our best LASSO and best MLR model, we’ll then go to the test set to determine an overall best model.
+
+## **Fitting Models on our `bike_data`**
+
+First, a training/test split on our `bike_data`:
+
+```         
+library(tidyverse)
+library(tidymodels)
+set.seed(10)
+bike_data <- read_csv("https://www4.stat.ncsu.edu/~online/datasets/bikeDetails.csv")
+bike_data <- bike_data |> 
+  mutate(log_selling_price = log(selling_price), 
+         log_km_driven = log(km_driven),
+         owners = ifelse(owner == "1st owner", "single", "multiple")) |>
+  select(log_km_driven, log_selling_price, everything())
+#use tidymodel functions for splitting the data
+bike_split <- initial_split(bike_data, prop = 0.7)
+bike_train <- training(bike_split)
+bike_test <- testing(bike_split)
+```
+
+Now we’ll proceed with finding our best MLR model and best LASSO model on just the `bike_train` data.
+
+### **Selecting the Best MLR Model Using CV**
+
+Again, it isn’t necessary to use CV to select an MLR model (there are tons of ways to choose between candidate MLR models - AIC, BIC, backward selection, Mallow’s Cp, …). However, CV is a perfectly valid way to choose between MLR models.
+
+Let’s compare the following models
+
+- MLR model 1: `log_selling_price ~ log_km_driven + owners + year` (fits different intercept based on `owners` being “single” or “multiple” and slope terms for `log_km_driven` and `year`)
+
+- MLR model 2: `log_selling_price ~ log_km_driven + owners + log_km_driven*owners` (fits different SLR models between `log_selling_price` and `log_km_driven` (different slopes and intercepts) for each setting of `owners`)
+
+- MLR model 3: `log_selling_price ~ (log_km_driven + owners + year)^2` (fits different a model with all pairwise interactions and main effects - essentially two separate MLR models for each setting of `owners` using `log_km_driven` and `year` as predictors)
+
+We want to just use the training data here and 10 fold CV. First, let’s create our CV folds:
+
+```         
+#create folds
+bike_CV_folds <- vfold_cv(bike_train, 10)
+```
+
+Remember to use `tidymodels` we want to set up our model (and engine) and create our recipes. Those go into a workflow that can then be fit on the above folds.
+
+Let’s define our basic linear model:
+
+```         
+#set up how we'll fit our linear model
+MLR_spec <- linear_reg() |>
+  set_engine("lm")
+```
+
+Now define our recipes for the three models. Note: we created the `log_km_driven` variable earlier. This is ok because this isn’t a *learned* transform. That is, there is no danger of training/test set data leakage issues since we know how to do the natural log transform, regardless of the data.
+
+```         
+#define our MLR models
+MLR_recipe1 <- recipe(log_selling_price ~ log_km_driven + owners + year, 
+                      data = bike_train) |>
+  step_dummy(owners)
+MLR_recipe2 <- recipe(log_selling_price ~ log_km_driven + owners,
+                      data = bike_train) |>
+  step_dummy(owners) |>
+  step_interact(~log_km_driven:starts_with("owner"))
+
+MLR_recipe3 <- recipe(log_selling_price ~ log_km_driven + owners + year,
+                      data = bike_train) |>
+  step_dummy(owners) |>
+  step_interact(~log_km_driven:starts_with("owner") + log_km_driven:year + starts_with("owner"):year)
+```
+
+Now we create our workflows for each model:
+
+```         
+MLR_wkf1 <- workflow() |>
+  add_recipe(MLR_recipe1) |>
+  add_model(MLR_spec)
+
+MLR_wkf2 <- workflow() |>
+  add_recipe(MLR_recipe2) |>
+  add_model(MLR_spec)
+
+MLR_wkf3 <- workflow() |>
+  add_recipe(MLR_recipe3) |>
+  add_model(MLR_spec)
+```
+
+Let’s fit these models to our CV folds and see how they perform!
+
+```         
+MLR_fit1 <-  MLR_wkf1 |>
+  fit_resamples(bike_CV_folds)
+
+MLR_fit2 <- MLR_wkf2 |>
+  fit_resamples(bike_CV_folds) 
+
+MLR_fit3 <- MLR_wkf3 |>
+  fit_resamples(bike_CV_folds)
+```
+
+Combine the metrics across the folds and create a final data frame with the results
+
+```         
+rbind(MLR_fit1 |> collect_metrics() |> filter(.metric == "rmse"),
+      MLR_fit2 |> collect_metrics() |> filter(.metric == "rmse"),
+      MLR_fit3 |> collect_metrics() |> filter(.metric == "rmse")) |> 
+  mutate(Model = c("Model 1", "Model 2", "Model 3")) |>
+  select(Model, mean, n, std_err)
+```
+
+```         
+# A tibble: 3 × 4
+  Model    mean     n std_err
+  <chr>   <dbl> <int>   <dbl>
+1 Model 1 0.494    10  0.0200
+2 Model 2 0.570    10  0.0158
+3 Model 3 0.484    10  0.0180
+```
+
+Based on RMSE, we see that the last model is the best MLR model of the three we fit! Note again, we’ve chosen between the three models from the *family* of models (MLR models) using just CV on the training data.
+
+Let’s refit that on the entire training set. We can use `fit_best()` for this purpose.
+
+```         
+MLR_final <-  MLR_wkf3 |>
+  fit(bike_train)
+tidy(MLR_final)
+```
+
+```         
+# A tibble: 7 × 5
+  term                            estimate std.error statistic       p.value
+  <chr>                              <dbl>     <dbl>     <dbl>         <dbl>
+1 (Intercept)                    -74.2      87.0        -0.853 0.394        
+2 log_km_driven                    3.42      8.58        0.398 0.691        
+3 year                             0.0442    0.0433      1.02  0.308        
+4 owners_single                 -136.       22.4        -6.09  0.00000000183
+5 log_km_driven_x_owners_single    0.222     0.0696      3.19  0.00148      
+6 log_km_driven_x_year            -0.00190   0.00427    -0.445 0.657        
+7 owners_single_x_year             0.0665    0.0110      6.02  0.00000000273
+```
+
+### **Fit a LASSO Model Using CV**
+
+A similar model to the MLR model that involves a **tuning** parameter is the LASSO model.
+
+- [**Least Angle Subset and Selection Operator**](https://www.jstor.org/stable/2346178) or LASSO
+
+  - Similar to Least Squares but a penalty is placed on the sum of the absolute values of the regression coefficients
+
+  - $\alpha$ (\>0) is called a tuning parameter
+
+$\min_{\beta} \sum_{i=1}^{n} (y_i - (\beta_0 + \beta_1 x_{1i} + \ldots + \beta_p x_{pi}))^2 + \alpha \sum_{j=1}^{p} |\beta_j|$
+
+- For an $\alpha$ of 0 we get the usual least squares estimates. As α gets larger we ‘shrink’ the estimates toward 0.
+
+<!-- -->
+
+- We have a different model fit for each value of α. When choosing the tuning parameter (α), we are really considering a **family of models** for a given set of predictors!
+
+  - Consider the MLR model with different intercepts based on `owners` that includes both `log_km_driven` and `year` as predictors. The plot here gives the coefficient profiles (estimates) as a function of α (although and α of 0 here corresponds to being on the right hand side of the plot).
+
+To read this plot, note that each line represents the value of one of the ‘slope’ coefficients in the model. All the way on the right we have the unconstrained solution (the usual MLR solution). Compare the values there to
+
+```         
+lm(log_selling_price ~ log_km_driven + year + owners, data = bike_train)$coef
+```
+
+```         
+  (Intercept) log_km_driven          year  ownerssingle 
+-134.57077580   -0.24380816    0.07339603   -0.08397016 
+```
+
+As we move to the left on the graph (as α increases) we see that our coefficients are shrunk towards 0, eventually being set to 0!
+
+We want to choose which level of shrinkage is appropriate. That is, which value of α gives us the best model for predicting! A perfect case for using CV!
+
+#### Create our Recipe
+
+Let’s use 10 fold CV to choose our α value (i.e. figure out our best LASSO model with these three predictors). As we are penalizing the magnitude of the slope estimates (and the estimates depend on the units of the predictor), LASSO models should really be fit on standardized predictors. Let’s include that step in our recipe!
+
+```         
+#set up how we'll fit our LASSO model
+#code modified from https://juliasilge.com/blog/lasso-the-office/
+LASSO_recipe <- recipe(log_selling_price ~ log_km_driven + owners + year, 
+                      data = bike_train) |>
+  step_dummy(owners) |>
+  step_normalize(log_km_driven, year)
+```
+
+#### Create a Model Instance with `tune()`
+
+Great, now we need to specify a LASSO model. Recall [**this page**](https://www.tidymodels.org/find/parsnip/) allows us to find a type of model to fit along with how to specify it and the engine used to fit the model.
+
+In this case, we still want `linear_reg()` but we want to use the ‘glmnet’ engine. We also want to specify the `penalty` parameter (corresponds to a form of α we mentioned above). “glmnet” actually allows us to fit a more complicated model (the elastic net) so there is a second tuning parameter to deal with (called `mixture`).
+
+- We set `mixture = 1` to turn this into a LASSO model (rather than an elastic net model)
+
+- We set `penalty = tune()` to tell `tidymodels` we are going to use a resampling method to choose this parameter
+
+```         
+LASSO_spec <- linear_reg(penalty = tune(), mixture = 1) |>
+  set_engine("glmnet")
+```
+
+Sweet - now we create our workflow.
+
+```         
+LASSO_wkf <- workflow() |>
+  add_recipe(LASSO_recipe) |>
+  add_model(LASSO_spec)
+LASSO_wkf
+```
+
+```         
+══ Workflow ════════════════════════════════════════════════════════════════════
+Preprocessor: Recipe
+Model: linear_reg()
+
+── Preprocessor ────────────────────────────────────────────────────────────────
+2 Recipe Steps
+
+• step_dummy()
+• step_normalize()
+
+── Model ───────────────────────────────────────────────────────────────────────
+Linear Regression Model Specification (regression)
+
+Main Arguments:
+  penalty = tune()
+  mixture = 1
+
+Computational engine: glmnet 
+```
+
+#### Fit the Model with `tune_grid()` and `grid_regular()`
+
+We saw how to fit a workflow to a set of CV folds with `fit_resample()`. Since we have a tuning parameter here, we don’t want to use that function. Instead, we use `tune_grid()`. This function allows us to fit the model to CV folds but specify the set of tuning parameters to consider.
+
+- **This implies we are actually doing a bunch of model fits on the CV folds!** One for each tuning parameter we specify.
+
+- In the `tune_grid()` function we can specify the values of the tuning parameter with the `grid =` argument.
+
+- `grid_regular()` is a function that can be used to choose a grid of reasonable values
+
+```         
+#A warning will occur for one value of the tuning parameter, safe to ignore
+LASSO_grid <- LASSO_wkf |>
+  tune_grid(resamples = bike_CV_folds,
+            grid = grid_regular(penalty(), levels = 200),
+            save_workflow = TRUE) 
+LASSO_grid
+```
+
+```         
+# Tuning results
+# 10-fold cross-validation 
+# A tibble: 10 × 4
+   splits           id     .metrics           .notes          
+   <list>           <chr>  <list>             <list>          
+ 1 <split [667/75]> Fold01 <tibble [400 × 5]> <tibble [8 × 4]>
+ 2 <split [667/75]> Fold02 <tibble [400 × 5]> <tibble [8 × 4]>
+ 3 <split [668/74]> Fold03 <tibble [400 × 5]> <tibble [8 × 4]>
+ 4 <split [668/74]> Fold04 <tibble [400 × 5]> <tibble [8 × 4]>
+ 5 <split [668/74]> Fold05 <tibble [400 × 5]> <tibble [8 × 4]>
+ 6 <split [668/74]> Fold06 <tibble [400 × 5]> <tibble [8 × 4]>
+ 7 <split [668/74]> Fold07 <tibble [400 × 5]> <tibble [8 × 4]>
+ 8 <split [668/74]> Fold08 <tibble [400 × 5]> <tibble [8 × 4]>
+ 9 <split [668/74]> Fold09 <tibble [400 × 5]> <tibble [8 × 4]>
+10 <split [668/74]> Fold10 <tibble [400 × 5]> <tibble [8 × 4]>
+
+There were issues with some computations:
+
+  - Warning(s) x80: A correlation computation is required, but `estimate` is constant...
+
+Run `show_notes(.Last.tune.result)` for more information.
+```
+
+This may look like it only has one fit per fold but the list columns hide the fact that we actually have fit 200 separate LASSO models (one for each tuning parameter specified by `grid_regular()`). Notice this:
+
+```         
+LASSO_grid[1, ".metrics"][[1]]
+```
+
+```         
+[[1]]
+# A tibble: 400 × 5
+    penalty .metric .estimator .estimate .config          
+      <dbl> <chr>   <chr>          <dbl> <chr>            
+ 1 1   e-10 rmse    standard       0.475 pre0_mod001_post0
+ 2 1   e-10 rsq     standard       0.596 pre0_mod001_post0
+ 3 1.12e-10 rmse    standard       0.475 pre0_mod002_post0
+ 4 1.12e-10 rsq     standard       0.596 pre0_mod002_post0
+ 5 1.26e-10 rmse    standard       0.475 pre0_mod003_post0
+ 6 1.26e-10 rsq     standard       0.596 pre0_mod003_post0
+ 7 1.41e-10 rmse    standard       0.475 pre0_mod004_post0
+ 8 1.41e-10 rsq     standard       0.596 pre0_mod004_post0
+ 9 1.59e-10 rmse    standard       0.475 pre0_mod005_post0
+10 1.59e-10 rsq     standard       0.596 pre0_mod005_post0
+# ℹ 390 more rows
+```
+
+This is actually a `tibble` with 400 metrics (200 `rmse` values and 200 `rsq` values).
+
+Of course, we want to have these metrics computed across the folds for each of our 200 values of the tuning parameter. We use `collect_metrics()` as before!
+
+```         
+LASSO_grid |>
+  collect_metrics() |>
+  filter(.metric == "rmse")
+```
+
+```         
+# A tibble: 200 × 7
+    penalty .metric .estimator  mean     n std_err .config          
+      <dbl> <chr>   <chr>      <dbl> <int>   <dbl> <chr>            
+ 1 1   e-10 rmse    standard   0.494    10  0.0199 pre0_mod001_post0
+ 2 1.12e-10 rmse    standard   0.494    10  0.0199 pre0_mod002_post0
+ 3 1.26e-10 rmse    standard   0.494    10  0.0199 pre0_mod003_post0
+ 4 1.41e-10 rmse    standard   0.494    10  0.0199 pre0_mod004_post0
+ 5 1.59e-10 rmse    standard   0.494    10  0.0199 pre0_mod005_post0
+ 6 1.78e-10 rmse    standard   0.494    10  0.0199 pre0_mod006_post0
+ 7 2.00e-10 rmse    standard   0.494    10  0.0199 pre0_mod007_post0
+ 8 2.25e-10 rmse    standard   0.494    10  0.0199 pre0_mod008_post0
+ 9 2.52e-10 rmse    standard   0.494    10  0.0199 pre0_mod009_post0
+10 2.83e-10 rmse    standard   0.494    10  0.0199 pre0_mod010_post0
+# ℹ 190 more rows
+```
+
+Ok, but it is tough to see the values there. Let’s plot it instead.
+
+```         
+LASSO_grid |>
+  collect_metrics() |>
+  filter(.metric == "rmse") |>
+  ggplot(aes(penalty, mean, color = .metric)) +
+  geom_line()
+```
+
+For the smallest value of the penalty (left side of the graph) we have no shrinkage. As our penalty gets bigger we have to shrink our coefficients more (further right on the graph has more shrinkage). Having little to no shrinkage is associated with the lower RMSE values based on our CV results!
+
+#### Pull Out the ‘Best’ Model with `select_best()` and `finalize_workflow()`
+
+We can get the tuning parameter corresponding to the best RMSE value and determine which coefficients that model has using `select_best()` and `finalize_workflow()`.
+
+```         
+lowest_rmse <- LASSO_grid |>
+  select_best(metric = "rmse")
+lowest_rmse
+```
+
+```         
+# A tibble: 1 × 2
+  penalty .config          
+    <dbl> <chr>            
+1  0.0174 pre0_mod165_post0
+```
+
+Now fit that ‘best’ LASSO model on the entire training set. `finalize_workflow()` tells R to finish our training with a specific setting of the terms we set to `tune()` in our model definition. We can supply the result from the previous code chunk to get the best model.
+
+```         
+LASSO_wkf |>
+  finalize_workflow(lowest_rmse)
+```
+
+```         
+══ Workflow ════════════════════════════════════════════════════════════════════
+Preprocessor: Recipe
+Model: linear_reg()
+
+── Preprocessor ────────────────────────────────────────────────────────────────
+2 Recipe Steps
+
+• step_dummy()
+• step_normalize()
+
+── Model ───────────────────────────────────────────────────────────────────────
+Linear Regression Model Specification (regression)
+
+Main Arguments:
+  penalty = 0.0174263338600965
+  mixture = 1
+
+Computational engine: glmnet 
+```
+
+```         
+#fit it to the entire training set to see the model fit
+LASSO_final <- LASSO_wkf |>
+  finalize_workflow(lowest_rmse) |>
+  fit(bike_train)
+tidy(LASSO_final)
+```
+
+```         
+# A tibble: 4 × 3
+  term          estimate penalty
+  <chr>            <dbl>   <dbl>
+1 (Intercept)    10.7     0.0174
+2 log_km_driven  -0.233   0.0174
+3 year            0.307   0.0174
+4 owners_single  -0.0151  0.0174
+```
+
+### **Comparing Chosen Models on the Test Set**
+
+Now we have our best model from each ‘family’ of models (one MLR and one LASSO model). Let’s take them to the test set and see how they perform on this data!
+
+- We can use `last_fit()` on the `bike_split` object as we did in the previous section of notes
+
+- This uses the **training set** transformations on the test set and does predictions
+
+```         
+MLR_wkf3 |>
+  last_fit(bike_split) |>
+  collect_metrics()
+```
+
+```         
+# A tibble: 2 × 4
+  .metric .estimator .estimate .config        
+  <chr>   <chr>          <dbl> <chr>          
+1 rmse    standard       0.546 pre0_mod0_post0
+2 rsq     standard       0.483 pre0_mod0_post0
+```
+
+```         
+LASSO_wkf |>
+  finalize_workflow(lowest_rmse) |>
+  last_fit(bike_split) |>
+  collect_metrics()
+```
+
+```         
+# A tibble: 2 × 4
+  .metric .estimator .estimate .config        
+  <chr>   <chr>          <dbl> <chr>          
+1 rmse    standard       0.557 pre0_mod0_post0
+2 rsq     standard       0.473 pre0_mod0_post0
+```
+
+We see that the MLR model outperforms the LASSO model! This would be our overall best model.
+
+- Just to relate this to how we found this previously, note that we can do this ourselves in the usual manner. That is, we can use our training set fit (`MLR_final` and `LASSO_final`) with `predict()` and `rmse_vec()` from `yardstick`:
+
+```         
+MLR_final |>
+  predict(bike_test) |>
+  pull() |>
+  rmse_vec(truth = bike_test$log_selling_price)
+```
+
+```         
+[1] 0.5460833
+```
+
+```         
+LASSO_final |>
+  predict(bike_test) |>
+  pull() |>
+  rmse_vec(truth = bike_test$log_selling_price)
+```
+
+```         
+[1] 0.5565673
+```
+
+- As `MLR_final` and `LASSO_final` both have class `workflow`, using `predict()` actually uses `predict.workflow()`. This means it does the appropriate **training set** transformations prior to predicting on the test set! From the documentation for `predict.workflow()`:
+
+> **This is the predict() method for a fit workflow object. The nice thing about predicting from a workflow is that it will:**
+
+> - **Preprocess new_data using the preprocessing method specified when the workflow was created and fit. This is accomplished using hardhat::forge(), which will apply any formula preprocessing or call recipes::bake() if a recipe was supplied.**
+
+> - **Call parsnip::predict.model_fit() for you using the underlying fit parsnip model.**
+
+### **Final Step**
+
+Now that we have an overall best model from our set of best models :) We would now refit the best model on the full dataset for future use. Again, we want to apply the transformations laid out previously. However, any transforms that depend on the data should now be based on the full data, not just the training data. By using `tidymodels` this is taken care of for us! We simply `fit()` the model with the full data set.
+
+```         
+final_model <- MLR_wkf3 |>
+  fit(bike_data) 
+tidy(final_model)
+```
+
+```         
+# A tibble: 7 × 5
+  term                            estimate std.error statistic       p.value
+  <chr>                              <dbl>     <dbl>     <dbl>         <dbl>
+1 (Intercept)                   -127.       79.6        -1.60  0.110        
+2 log_km_driven                    6.56      7.82        0.839 0.402        
+3 year                             0.0709    0.0396      1.79  0.0738       
+4 owners_single                 -126.       20.8        -6.07  0.00000000179
+5 log_km_driven_x_owners_single    0.281     0.0616      4.57  0.00000555   
+6 log_km_driven_x_year            -0.00348   0.00389    -0.895 0.371        
+7 owners_single_x_year             0.0613    0.0103      5.97  0.00000000333
+```
+
+If we want the final model fit in the usual `lm` form, we can use `extract_fit_parsnip()`
+
+```         
+almost_usual_fit <- extract_fit_parsnip(final_model)
+usual_fit <- almost_usual_fit$fit
+summary(usual_fit)
+```
+
+```         
+
+Call:
+stats::lm(formula = ..y ~ ., data = data)
+
+Residuals:
+     Min       1Q   Median       3Q      Max 
+-1.82178 -0.34620 -0.05771  0.26085  2.50456 
+
+Coefficients:
+                                Estimate Std. Error t value Pr(>|t|)    
+(Intercept)                   -1.274e+02  7.964e+01  -1.600   0.1099    
+log_km_driven                  6.557e+00  7.817e+00   0.839   0.4018    
+year                           7.089e-02  3.961e-02   1.790   0.0738 .  
+owners_single                 -1.263e+02  2.081e+01  -6.069 1.79e-09 ***
+log_km_driven_x_owners_single  2.811e-01  6.157e-02   4.566 5.55e-06 ***
+log_km_driven_x_year          -3.482e-03  3.889e-03  -0.895   0.3708    
+owners_single_x_year           6.127e-02  1.027e-02   5.965 3.33e-09 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+Residual standard error: 0.5001 on 1054 degrees of freedom
+Multiple R-squared:  0.5081,    Adjusted R-squared:  0.5053 
+F-statistic: 181.4 on 6 and 1054 DF,  p-value: < 2.2e-16
+```
+
+### **Wrap-up**
+
+- If you are only considering one type of model, you can use just a training/test set or just use k-fold CV to select the best version of that model
+
+- When you have multiple types of models to choose from, we usually use both! Why?
+
+  - When we use the test set too much, we may have ‘**data leakage**’
+
+  - Essentially we end up training our models to the test set by using it too much
+
+  - Using CV on the training set and using the test set as a final comparison helps us avoid this!
+
+## **Recap**
+
+Cross-validation gives a way to use more of the data while still seeing how the model does on test data
+
+- Commonly 5 fold or 10 fold is done
+
+- Once a best model is chosen, model is refit on entire data set
+
+We can use CV with or without a training/test split, depending on how much data we have and whether or not we have tuning parameters!
+
+# Logistic Regression Model
+
+Used when you have a binary response variable (a Classification task)
+
+- Consider just a binary response
+
+  - What is the mean of the response?
+
+Suppose you have a predictor variable as well, call it $x$
+
+- Given two values of we could model separate proportions
+
+$$E(Y|x = x_1) = P(Y=1|x=x_1)$$
+
+$$E(Y|x = x_2) = P(Y=1|x=x_2)$$
+
+- For a continuous , we could consider a SLR model
+
+$$E(Y|x) = P(Y=1|x) = \beta_0 + \beta_1x$$
+
+Consider data about heart disease
+
+```{r}
+library(tidyverse)
+heart_data <- read_csv("https://www4.stat.ncsu.edu/online/datasets/heart.csv") |>
+  filter(RestingBP > 0) #remove one value
+heart_data |> select(HeartDisease, everything()) 
+#Cholesterol has many values set to 0 so we ignore that
+```
+
+## Probability Summary
+
+• Summarize heart disease prevalence
+
+```{r}
+heart_data |>
+  group_by(HeartDisease) |>
+  summarize(count = n())
+```
+
+```{r}
+heart_data |>
+  group_by(HeartDisease) |>
+  summarize(mean_Age = mean(Age),
+            mean_RestingBP = mean(RestingBP))
+```
+
+## Linear Regression is NOT appropiate
+
+```{r}
+ggplot(heart_data, aes(x = Age, y = HeartDisease, color = RestingBP)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+```{r}
+ggplot(heart_data, aes(x = Age, y = HeartDisease, color = RestingBP)) +
+  geom_jitter() +
+  geom_smooth(method = "lm")
+```
+
+Obtain proportion with heart disease for different age groups
+
+```{r}
+Age_x <- seq(from = min(heart_data$Age), to = max(heart_data$Age), length = 20)
+heart_data_grouped <- heart_data |>
+  mutate(Age_groups = cut(Age, breaks = Age_x)) |>
+  group_by(Age_groups) |>
+  summarize(HeartDisease_mean = mean(HeartDisease), counts = n())
+heart_data_grouped
+```
+
+```{r}
+ggplot(data = heart_data, aes(x = Age, y = HeartDisease)) +
+  geom_jitter(aes(color = RestingBP)) +
+  geom_point(data = heart_data_grouped, aes(x = Age_x, y = HeartDisease_mean, size = counts)) +
+  geom_smooth(method = "lm", color = "Green")
+```
+
+Response = success/failure, then modeling average number of successes for a given is a probability!
+
+- predictions should never go below 0
+
+- predictions should never go above 1
+
+- Basic Logistic Regression models success probability using the logistic function
+
+$$P(Y = 1|x) = P(\text{success}|x) = \frac{e^{\beta_0 + \beta_1 x}}{1 + e^{\beta_0 + \beta_1 x}}$$ - The logistic regression model doesn't have a closed form solution (maximum likelihood often used to fit parameters)
+
+- Back-solving shows the logit or log-odds of success is linear in the parameters
+
+$$\log\left(\frac{P(\text{success}|x)}{1 - P(\text{success}|x)}\right) = \beta_0 + \beta_1 x$$ - Coefficient interpretation changes greatly from linear regression model!
+
+- $\beta_1$ represents a change in the log-odds of success
+
+As with linear regression, we can include multiple predictors and interaction terms!
+
+- Adding a dummy variable corresponding to a binary variable just changes the 'intercept'
+
+As with linear regression, we can include multiple predictors and interaction terms!
+
+- Not a constant shift
+
+## Interactions can be included
+
+- If we fit an interaction term with our dummy variable, we essentially fit two separate logistic regression models
+
+- Can also include more than one numeric predictor
+
+  - Difficult to visualize!
+
+- Adding in polynomial terms increases flexibility as well!
+
+## Selecting a Model
+
+- Recall we can use k-fold CV as a proxy for test set error if we don't want to split the data
+
+- Metric to quantify prediction quality? Basic measures:
+
+  - Accuracy:
+
+  - Misclassification Rate:
+
+  - log-loss: $$-\left(y \log(\hat{p}) + (1 - y) \log(1 - \hat{p})\right)$$
+
+## Using `tidymodels` to Fit a Logistic Regression Model
+
+- First, we'll do a training/test split via initial_split()
+
+- Let's also create our CV splits on the training data
+
+```{r}
+library(tidymodels)
+set.seed(3557)
+heart_data <- heart_data |> mutate(HeartDisease = factor(HeartDisease))
+heart_split <- initial_split(heart_data, prop = 0.8)
+heart_train <- training(heart_split)
+heart_test <- testing(heart_split)
+heart_CV_folds <- vfold_cv(heart_train, 10)
+```
+
+- Next, we'll set up our recipes for the data, standardizing these numeric variables
+
+```{r}
+LR1_rec <- recipe(HeartDisease ~ Age + Sex,
+                  data = heart_train) |>
+  step_normalize(Age) |>
+  step_dummy(Sex)
+
+LR2_rec <- recipe(HeartDisease ~ Age + Sex + ChestPainType + RestingBP +                       RestingECG, data = heart_train) |>
+  step_normalize(all_numeric(), -HeartDisease) |>
+  step_dummy(Sex, ChestPainType, RestingECG)
+
+LR3_rec <- recipe(HeartDisease ~ Age + Sex + ChestPainType + RestingBP +                       RestingECG + MaxHR + ExerciseAngina, data = heart_train) |>
+  step_normalize(all_numeric(), -HeartDisease) |>
+  step_dummy(Sex, ChestPainType, RestingECG, ExerciseAngina)
+
+LR3_rec |> prep(heart_train) |> bake(heart_train) |> colnames()
+```
+
+Now set up our model type and engine
+
+```{r}
+LR_spec <- logistic_reg() |>
+  set_engine("glm")
+```
+
+Create our workflows
+
+```{r}
+LR1_wkf <- workflow() |>
+  add_recipe(LR1_rec) |>
+  add_model(LR_spec)
+LR2_wkf <- workflow() |>
+  add_recipe(LR2_rec) |>
+  add_model(LR_spec)
+LR3_wkf <- workflow() |>
+  add_recipe(LR3_rec) |>
+  add_model(LR_spec)
+```
+
+Fit to our CV folds!
+
+```{r}
+LR1_fit <- LR1_wkf |>
+  fit_resamples(heart_CV_folds, metrics = metric_set(accuracy, mn_log_loss))
+LR2_fit <- LR2_wkf |>
+  fit_resamples(heart_CV_folds, metrics = metric_set(accuracy, mn_log_loss))
+LR3_fit <- LR3_wkf |>
+  fit_resamples(heart_CV_folds, metrics = metric_set(accuracy, mn_log_loss))
+```
+
+Collect our metrics and see which model did the best!
+
+```{r}
+rbind(LR1_fit |> collect_metrics(),
+      LR2_fit |> collect_metrics(),
+      LR3_fit |> collect_metrics()) |>
+  mutate(Model = c("Model1", "Model1", "Model2", "Model2", "Model3", "Model3")) |>
+  select(Model, everything())
+```
+
+```{r}
+#compare to proportion of 1's in training data
+mean(heart_train$HeartDisease == "1")
+```
+
+Find the confusion matrix for our best model on the training set
+
+```{r}
+LR_train_fit <- LR3_wkf |>
+  fit(heart_train)
+conf_mat(heart_train |> mutate(estimate = LR_train_fit |> predict(heart_train) |> pull()), #data
+         HeartDisease, #truth
+         estimate) #estimate from model
+```
+
+Grab our 'best' model and test it on the test set
+
+```{r}
+LR3_wkf |>
+  last_fit(heart_split, metrics = metric_set(accuracy, mn_log_loss)) |>
+  collect_metrics()
+
+conf_mat(heart_test |> mutate(estimate = LR_train_fit |> predict(heart_test) |> pull()), HeartDisease, estimate)
+```
+
+Suppose we like this model the best overall, we'd fit it to the entire data set
+
+```{r}
+final_model <- LR3_wkf |>
+  fit(heart_data)
+tidy(final_model)
+```
+
+# **Regression & Classification Trees**
+
+Published
+
+2026-07-08
+
+We’ve looked to two very common models:
+
+- Multiple Linear Regression: Commonly used model with a numeric response
+
+- Logistic Regression: Commonly used model with a binary response
+
+These models are great ways to try and understand relationships between variables. One thing that can be a drawback (or benefit, depending) when using these models is that they are highly structured. Recall, in the MLR case we are essentially fitting some high dimensional plane to our data. If our data doesn’t follow this type of structure, the models fit can do a poor job predicting in some cases.
+
+Instead of these structured models, we can use models that are more flexible. Let’s talk about one such type of model, the regression/classification tree!
+
+## **Tree Based Methods**
+
+Tree based methods are very flexible. They attempt to **split up predictor space into regions**. On each region, a different prediction can then be made. Adjacent regions need not have predictions close to each other!
+
+Recall that we have two separate tasks we could do in a supervised learning situation, regression or classification. Depending on the situation, we can create a regression or classification tree!
+
+- *Classification* tree if the goal is to classify (predict) group membership
+
+  - Usually use **most prevalent class** in region as the prediction
+
+- *Regression* tree if the goal is to predict a continuous response
+
+  - Usually use **mean of observations** in region as the prediction
+
+These models are very easy for people to interpret! For instance, consider the tree below relating a predictor (`speed`) to stopping distance (`dist`).
+
+```         
+library(tree) #rpart is also often used
+```
+
+```         
+Warning: package 'tree' was built under R version 4.6.1
+```
+
+```         
+fitTree <- tree(dist ~ speed, data = cars) #default splitting is deviance
+plot(fitTree)
+text(fitTree)
+```
+
+We can compare this to the simple linear regression fit to see the increased flexibility of a regression tree model.
+
+```         
+library(tidyverse)
+ggplot(cars, aes(x = speed, y = dist)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, size = 2) + 
+  geom_segment(x = 0, xend = 9.5, y = 10.67, yend = 10.67, col = "Orange", size = 2) +
+  geom_segment(x = 9.5, xend = 12.5, y = 23.22, yend = 23.22, col = "Orange", size = 2) +
+  geom_segment(x = 12.5, xend = 17.5, y = 39.75, yend = 39.75, col = "Orange", size = 2) +
+  geom_segment(x = 17.5, xend = 23.5, y = 55.71, yend = 55.71, col = "Orange", size = 2) +
+  geom_segment(x = 23.5, xend = max(cars$speed), y = 92, yend = 92, col = "Orange", size = 2)
+```
+
+### **How Is a Regression Tree Fit?**
+
+Recall: Once we’ve chosen our model form, we need to fit the model to data. Generally, we can write the fitting process as the minimization of some loss function over the training data. How do we pick our splits of the predictor space in this case?
+
+- Fit using recursive binary splitting - a greedy algorithm
+
+- For every possible value of each predictor, we find the squared error loss based on splitting our data around that point. We then try to minimize that
+
+  - Consider having one variable x. For a given observed value, call it s, we can think of having two regions (recall \| is read as ‘given’):
+
+$$R_1(s) = \{x \mid x < s\} \quad \text{and} \quad R_2(s) = \{x \mid x \geq s\}$$
+
+- We seek the value of $s$ that minimize the equation
+
+$$\sum_{x \in R_1(s)} (y_i - \bar{y}_{R_1})^2 + \sum_{x \in R_2(s)} (y_i - \bar{y}_{R_2})^2$$
+
+- Written more mathematically, we could say we want minimize
+
+$$\min_s \sum_{i: x_i \in R_1(s)} (y_i - \bar{y}_{R_1})^2 + \sum_{i: x_i \in R_2(s)} (y_i - \bar{y}_{R_2})^2$$
+
+Let’s visualize this idea! Consider that basic `cars` data set that has a response of `dist` (stopping distance) and a predictor of `speed`. Let’s find the value of the loss functions for different splits of our `speed` variable.
+
+```         
+ggplot(cars, aes(x = speed, y = dist)) + 
+  geom_point()
+```
+
+Let’s first try a split at `speed` = 7. The sum of squared errors based on this split is $2.766546^{4}$
+
+Again, this is found by taking all the points in the first region, finding the residual (from the mean, represented by the blue line here), squaring those, and summing the values. Then we repeat for the 2nd region. The sum of those two values is then the sum of squared errors (SSE) if we were to use this split.
+
+Is that the smallest it could be? Likely not! Let’s try some other splits and see what SSE they give.
+
+- We would try this for all possible splits (across each predictor) and choose the split that minimizes the sum of squared errors as our first split. It turns out that `speed` = 17.5 is the optimal splitting point for this data set
+
+- Next, we’d go down the first branch of that split to that ‘node’. This node has all the observations corresponding to that branch. Now we repeat this process there
+
+- Here the best split on the lower portion is 12.5.
+
+- Likewise, we go down the second branch to the other node and repeat the process.
+
+- Generally, we grow a \`large’ tree (many nodes)
+
+- Trees can then be **pruned** back so as to not overfit the data (pruned back using some criterion like cost-complexity pruning)
+
+- Generally, we can choose number of nodes/splits using the **training/test set or cross-validation**!
+
+### **Fitting Regression Trees with `tidymodels`**
+
+Recall the Bike data and `log_selling_price` as our response. We’ll do a training test split and select our regression tree model on the training set using CV. This will allow us to compare the ‘best’ regression tree model to our best MLR and LASSO models from earlier!
+
+For this setup, our process for fitting a model with `tidymodels` is
+
+1.  Split the data into the train and test splits (we’ll use the same seed as previous so we get the same train and test splits!)
+
+2.  Create CV folds from the training set
+
+3.  Create our recipe - that is, determine the predictors in our model
+
+4.  Define our model engine - that is, decide the type of model and how it will be fit
+
+5.  Create a workflow
+
+6.  Fit the workflow to our CV folds.
+
+7.  Collect the metrics and determine the best model on the training data (here best tuning parameter set)
+
+8.  Finalize our workflow and fit our model to the entire training data set
+
+9.  Compare models on the test set.
+
+10. Fit the overall best model to the entire data set.
+
+```         
+set.seed(10)
+library(tidyverse)
+library(tidymodels)
+bike_data <- read_csv("https://www4.stat.ncsu.edu/~online/datasets/bikeDetails.csv") |>
+  mutate(log_selling_price = log(selling_price),
+         log_km_driven = log(km_driven),
+         owners = ifelse(owner == "1st owner", "single", "multiple")) |>
+  select(-selling_price)
+```
+
+#### 1. Split the data
+
+```         
+#save creation of new variables for now!
+bike_split <- initial_split(bike_data, prop = 0.7)
+bike_train <- training(bike_split)
+bike_test <- testing(bike_split)
+bike_train
+```
+
+```         
+# A tibble: 742 × 9
+   name     year seller_type owner km_driven ex_showroom_price log_selling_price
+   <chr>   <dbl> <chr>       <chr>     <dbl>             <dbl>             <dbl>
+ 1 Bajaj …  2012 Individual  1st …     50000             54299             10.3 
+ 2 Honda …  2015 Individual  1st …      7672             54605             10.6 
+ 3 Bajaj …  2005 Individual  1st …     21885                NA              9.80
+ 4 Hero H…  2017 Individual  1st …     27000                NA             10.5 
+ 5 Royal …  2013 Individual  1st …     49000                NA             11.4 
+ 6 Bajaj …  2008 Individual  1st …     19500                NA             10.3 
+ 7 Hero C…  2014 Individual  1st …     38000                NA             10.5 
+ 8 Bajaj …  2009 Individual  1st …     16000                NA              9.90
+ 9 Hero H…  2008 Individual  3rd …     65000                NA             10.1 
+10 Bajaj …  2019 Individual  1st …      7600                NA             12.2 
+# ℹ 732 more rows
+# ℹ 2 more variables: log_km_driven <dbl>, owners <chr>
+```
+
+#### 2. Create our CV Folds
+
+```         
+bike_CV_folds <- vfold_cv(bike_train, 10)
+```
+
+#### 3. Create our Recipe
+
+We can fit a regression tree model in a very similar way to how we fit our MLR models! Let’s create our recipe.
+
+```         
+tree_rec <- recipe(log_selling_price ~ ., data = bike_train) |>
+  update_role(name, new_role = "ID") |>
+  step_log(km_driven) |>
+  step_rm(ex_showroom_price) |>
+  step_dummy(owner, seller_type) |>
+  step_normalize(all_numeric(), -all_outcomes())
+tree_rec
+```
+
+```         
+```
+
+```         
+── Recipe ──────────────────────────────────────────────────────────────────────
+```
+
+```         
+```
+
+```         
+── Inputs 
+```
+
+```         
+Number of variables by role
+```
+
+```         
+outcome:   1
+predictor: 7
+ID:        1
+```
+
+```         
+```
+
+```         
+── Operations 
+```
+
+```         
+• Log transformation on: km_driven
+```
+
+```         
+• Variables removed: ex_showroom_price
+```
+
+```         
+• Dummy variables from: owner seller_type
+```
+
+```         
+• Centering and scaling for: all_numeric() -all_outcomes()
+```
+
+Note: We don’t need to include interaction terms in our tree based models! An interaction would imply that the effect of, say, `log_km_driven` depends on the `year` the bike was manufactured (and vice-versa). The tree structure inherently includes this type of relationship! For instance, suppose we first split on `log_km_driven` \> 10. On the branch where `log_km_driven` \> 10 we then split on `year` \< 1990. Suppose those are our only two splits. We can see that the effect of `year` is different depending on our `log_km_driven`! For one side of the `log_km_driven` split we don’t include `year` at all (hence it doesn’t have an effect when considering those values of `log_km_driven`) and on the other side of that split we change our prediction based on `year`. This is exactly the idea of an interaction!
+
+#### 4. Define our Model and Engine
+
+Next, let’s define our model. The [**info page**](https://parsnip.tidymodels.org//reference/details_linear_reg_lm.html) here can be used to determine the right function to call and the possible engines to use for the fit.
+
+In this case, `decision_tree()` with `rpart` as the engine will do the trick. If we click on the [**link for this model**](https://parsnip.tidymodels.org//reference/details_decision_tree_rpart.html) we can see that there are three tuning parameters we can consider:
+
+- `tree_depth`: Tree Depth (type: integer, default: 30L)
+
+- `min_n`: Minimal Node Size (type: integer, default: 2L)
+
+- `cost_complexity`: Cost-Complexity Parameter (type: double, default: 0.01)
+
+If we want to use CV to choose one of these, we can set its value to `tune()` when creating the model. Let’s use `tree_depth` and `cost_complexity` as our tuning parameters and set our `min_n` to 20.
+
+In the case of `decision_tree()` we also need to tell `tidymodels` whether we are doing a *regression* task vs a *classification* task. This is done via `set_mode()`.
+
+```         
+tree_mod <- decision_tree(tree_depth = tune(),
+                          min_n = 20,
+                          cost_complexity = tune()) |>
+  set_engine("rpart") |>
+  set_mode("regression")
+```
+
+#### 5. Create our Workflow
+
+Now we use `workflow()` to create an object to use in our fitting processes.
+
+```         
+tree_wkf <- workflow() |>
+  add_recipe(tree_rec) |>
+  add_model(tree_mod)
+```
+
+#### 6. Fit the Workflow to our CV Folds
+
+Now we can use `tune_grid()` on our `bike_CV_folds` object. We just need to create a tuning grid to fit our models with. If we don’t specify one, the `dials` package tries to figure it out for us:
+
+```         
+temp <- tree_wkf |> 
+  tune_grid(resamples = bike_CV_folds) #uses defaults from dials
+temp |> 
+  collect_metrics()
+```
+
+```         
+# A tibble: 20 × 8
+   cost_complexity tree_depth .metric .estimator  mean     n std_err .config    
+             <dbl>      <int> <chr>   <chr>      <dbl> <int>   <dbl> <chr>      
+ 1    0.0000000001          5 rmse    standard   0.502    10  0.0154 pre0_mod01…
+ 2    0.0000000001          5 rsq     standard   0.478    10  0.0184 pre0_mod01…
+ 3    0.000000001          11 rmse    standard   0.507    10  0.0169 pre0_mod02…
+ 4    0.000000001          11 rsq     standard   0.474    10  0.0221 pre0_mod02…
+ 5    0.00000001            1 rmse    standard   0.561    10  0.0190 pre0_mod03…
+ 6    0.00000001            1 rsq     standard   0.338    10  0.0176 pre0_mod03…
+ 7    0.0000001             7 rmse    standard   0.506    10  0.0159 pre0_mod04…
+ 8    0.0000001             7 rsq     standard   0.477    10  0.0207 pre0_mod04…
+ 9    0.000001             13 rmse    standard   0.507    10  0.0169 pre0_mod05…
+10    0.000001             13 rsq     standard   0.474    10  0.0221 pre0_mod05…
+11    0.00001               2 rmse    standard   0.538    10  0.0196 pre0_mod06…
+12    0.00001               2 rsq     standard   0.396    10  0.0209 pre0_mod06…
+13    0.0001                8 rmse    standard   0.507    10  0.0167 pre0_mod07…
+14    0.0001                8 rsq     standard   0.474    10  0.0220 pre0_mod07…
+15    0.001                15 rmse    standard   0.507    10  0.0175 pre0_mod08…
+16    0.001                15 rsq     standard   0.473    10  0.0231 pre0_mod08…
+17    0.01                  4 rmse    standard   0.501    10  0.0180 pre0_mod09…
+18    0.01                  4 rsq     standard   0.476    10  0.0220 pre0_mod09…
+19    0.1                  10 rmse    standard   0.561    10  0.0190 pre0_mod10…
+20    0.1                  10 rsq     standard   0.338    10  0.0176 pre0_mod10…
+```
+
+We can see that the `cost_complexity` parameter and `tree_depth` parameters are randomly varied and results are returned.
+
+If we want to set the number of the values ourselves, we can use `grid_regular()` instead. By specifying a vector or `levels` we can say how many of each tuning parameter we want. `grid_regular()` then finds all combinations of the values of each (here 10\*5 = 50 combinations).
+
+```         
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          levels = c(10, 5))
+```
+
+Now we use `tune_grid()` with this grid specified.
+
+```         
+tree_fits <- tree_wkf |> 
+  tune_grid(resamples = bike_CV_folds,
+            grid = tree_grid)
+tree_fits
+```
+
+```         
+# Tuning results
+# 10-fold cross-validation 
+# A tibble: 10 × 4
+   splits           id     .metrics           .notes          
+   <list>           <chr>  <list>             <list>          
+ 1 <split [667/75]> Fold01 <tibble [100 × 6]> <tibble [0 × 4]>
+ 2 <split [667/75]> Fold02 <tibble [100 × 6]> <tibble [0 × 4]>
+ 3 <split [668/74]> Fold03 <tibble [100 × 6]> <tibble [0 × 4]>
+ 4 <split [668/74]> Fold04 <tibble [100 × 6]> <tibble [0 × 4]>
+ 5 <split [668/74]> Fold05 <tibble [100 × 6]> <tibble [0 × 4]>
+ 6 <split [668/74]> Fold06 <tibble [100 × 6]> <tibble [0 × 4]>
+ 7 <split [668/74]> Fold07 <tibble [100 × 6]> <tibble [0 × 4]>
+ 8 <split [668/74]> Fold08 <tibble [100 × 6]> <tibble [0 × 4]>
+ 9 <split [668/74]> Fold09 <tibble [100 × 6]> <tibble [0 × 4]>
+10 <split [668/74]> Fold10 <tibble [100 × 6]> <tibble [0 × 4]>
+```
+
+#### 7. Collect Metrics and Determine the Best Model
+
+Looking at the `tree_fits` object isn’t super useful. It has all the info but we need to pull it out. As we see above, we can use `collect_metrics()` to combine the metrics across the folds.
+
+```         
+tree_fits |>
+  collect_metrics()
+```
+
+```         
+# A tibble: 100 × 8
+   cost_complexity tree_depth .metric .estimator  mean     n std_err .config    
+             <dbl>      <int> <chr>   <chr>      <dbl> <int>   <dbl> <chr>      
+ 1    0.0000000001          1 rmse    standard   0.561    10  0.0190 pre0_mod01…
+ 2    0.0000000001          1 rsq     standard   0.338    10  0.0176 pre0_mod01…
+ 3    0.0000000001          4 rmse    standard   0.496    10  0.0155 pre0_mod02…
+ 4    0.0000000001          4 rsq     standard   0.488    10  0.0189 pre0_mod02…
+ 5    0.0000000001          8 rmse    standard   0.507    10  0.0167 pre0_mod03…
+ 6    0.0000000001          8 rsq     standard   0.474    10  0.0220 pre0_mod03…
+ 7    0.0000000001         11 rmse    standard   0.507    10  0.0169 pre0_mod04…
+ 8    0.0000000001         11 rsq     standard   0.474    10  0.0221 pre0_mod04…
+ 9    0.0000000001         15 rmse    standard   0.507    10  0.0169 pre0_mod05…
+10    0.0000000001         15 rsq     standard   0.474    10  0.0221 pre0_mod05…
+# ℹ 90 more rows
+```
+
+As done in the [**tutorial**](https://www.tidymodels.org/start/tuning/), we can plot these to gain some insight:
+
+```         
+tree_fits |>
+  collect_metrics() |>
+  mutate(tree_depth = factor(tree_depth)) |>
+  ggplot(aes(cost_complexity, mean, color = tree_depth)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+```
+
+Ideally, we probably want to sort this by the smallest `rmse` value. Let’s also filter down to just looking at `rmse`.
+
+```         
+tree_fits |>
+  collect_metrics() |>
+  filter(.metric == "rmse") |>
+  arrange(mean)
+```
+
+```         
+# A tibble: 50 × 8
+   cost_complexity tree_depth .metric .estimator  mean     n std_err .config    
+             <dbl>      <int> <chr>   <chr>      <dbl> <int>   <dbl> <chr>      
+ 1    0.0000000001          4 rmse    standard   0.496    10  0.0155 pre0_mod02…
+ 2    0.000000001           4 rmse    standard   0.496    10  0.0155 pre0_mod07…
+ 3    0.00000001            4 rmse    standard   0.496    10  0.0155 pre0_mod12…
+ 4    0.0000001             4 rmse    standard   0.496    10  0.0155 pre0_mod17…
+ 5    0.000001              4 rmse    standard   0.496    10  0.0155 pre0_mod22…
+ 6    0.00001               4 rmse    standard   0.496    10  0.0155 pre0_mod27…
+ 7    0.0001                4 rmse    standard   0.496    10  0.0155 pre0_mod32…
+ 8    0.001                 4 rmse    standard   0.497    10  0.0154 pre0_mod37…
+ 9    0.01                  4 rmse    standard   0.501    10  0.0180 pre0_mod42…
+10    0.01                  8 rmse    standard   0.501    10  0.0180 pre0_mod43…
+# ℹ 40 more rows
+```
+
+The function `select_best()` can be used to grab the best model’s tuning parameter values. We also should specify which metric!
+
+```         
+tree_best_params <- select_best(tree_fits, metric = "rmse")
+tree_best_params
+```
+
+```         
+# A tibble: 1 × 3
+  cost_complexity tree_depth .config         
+            <dbl>      <int> <chr>           
+1    0.0000000001          4 pre0_mod02_post0
+```
+
+#### 8. Finalize our Workflow & Fit to the Entire Training Data
+
+(After this initial phase, we might also want to fit a finer grid of tuning parameter values near the current ‘best’ ones!)
+
+Now we can finalize our model on the training set by fitting this chosen model via `finalize_workflow()`.
+
+```         
+tree_final_wkf <- tree_wkf |>
+  finalize_workflow(tree_best_params)
+```
+
+Now that we’ve set up how to fit the final model, let’s do it via `last_fit()` on the `bike_split` object.
+
+```         
+tree_final_fit <- tree_final_wkf |>
+  last_fit(bike_split)
+tree_final_fit
+```
+
+```         
+# Resampling results
+# Manual resampling 
+# A tibble: 1 × 6
+  splits            id               .metrics .notes   .predictions .workflow 
+  <list>            <chr>            <list>   <list>   <list>       <list>    
+1 <split [742/319]> train/test split <tibble> <tibble> <tibble>     <workflow>
+```
+
+This object has information about how the final fitted model (fit on the entire training data set) performs on the test set. We can see the metrics more clearly using `collect_metrics()`.
+
+```         
+tree_final_fit |>
+  collect_metrics()
+```
+
+```         
+# A tibble: 2 × 4
+  .metric .estimator .estimate .config        
+  <chr>   <chr>          <dbl> <chr>          
+1 rmse    standard       0.565 pre0_mod0_post0
+2 rsq     standard       0.445 pre0_mod0_post0
+```
+
+As done in the tutorial, we could pull out this fit and learn more about it.
+
+```         
+tree_final_model <- extract_workflow(tree_final_fit) 
+tree_final_model
+```
+
+```         
+══ Workflow [trained] ══════════════════════════════════════════════════════════
+Preprocessor: Recipe
+Model: decision_tree()
+
+── Preprocessor ────────────────────────────────────────────────────────────────
+4 Recipe Steps
+
+• step_log()
+• step_rm()
+• step_dummy()
+• step_normalize()
+
+── Model ───────────────────────────────────────────────────────────────────────
+n= 742 
+
+node), split, n, deviance, yval
+      * denotes terminal node
+
+ 1) root 742 352.956900 10.721500  
+   2) year< 0.1604381 354 118.136200 10.304490  
+     4) year< -0.9711688 99  42.945090  9.955315  
+       8) km_driven>=-0.07668815 80  24.027690  9.812273  
+        16) year< -1.423811 52  11.224130  9.659656 *
+        17) year>=-1.423811 28   9.343018 10.095710 *
+       9) km_driven< -0.07668815 19  10.388380 10.557600 *
+     5) year>=-0.9711688 255  58.435060 10.440050  
+      10) km_driven>=-0.1109097 205  33.439120 10.355390  
+        20) year< -0.518526 80  12.341380 10.225880 *
+        21) year>=-0.518526 125  18.897350 10.438270 *
+      11) km_driven< -0.1109097 50  17.502590 10.787150  
+        22) year< -0.2922047 16   6.876996 10.503040 *
+        23) year>=-0.2922047 34   8.726354 10.920850 *
+   3) year>=0.1604381 388 117.094000 11.101970  
+     6) year< 0.6130808 149  29.735310 10.800920  
+      12) km_driven>=-0.5047722 121  20.838220 10.751970  
+        24) owner_X2nd.owner>=1.178863 15   1.468796 10.451540 *
+        25) owner_X2nd.owner< 1.178863 106  17.823910 10.794490 *
+      13) km_driven< -0.5047722 28   7.354383 11.012450  
+        26) km_driven< -1.218805 10   1.952084 10.880130 *
+        27) km_driven>=-1.218805 18   5.129964 11.085950 *
+     7) year>=0.6130808 239  65.435960 11.289650  
+      14) km_driven>=-1.236697 179  35.914190 11.164620  
+        28) km_driven>=0.1002281 52   8.612033 10.998670 *
+        29) km_driven< 0.1002281 127  25.283800 11.232560 *
+      15) km_driven< -1.236697 60  18.374510 11.662680  
+        30) km_driven>=-2.026019 38   8.605414 11.552500 *
+        31) km_driven< -2.026019 22   8.511043 11.852980 *
+```
+
+Plotting is definitely the better way to view this!
+
+```         
+tree_final_model |>
+  extract_fit_engine() |>
+  rpart.plot::rpart.plot(roundint = FALSE)
+```
+
+#### 9. Compare Models on the Test Set
+
+Recall, we fit MLR models and LASSO models to this data set. We can pull those back up to determine which model did the best overall on the test set. Then we can get an overall ‘best’ model!
+
+Here I’ll reproduce some code from before to get our previous best MLR and LASSO models fit to the training data.
+
+**MLR Model**
+
+```         
+#set up how we'll fit our linear model
+MLR_spec <- linear_reg() |>
+  set_engine("lm")
+#define the model
+MLR_recipe3 <- recipe(log_selling_price ~ log_km_driven + owners + year,
+                      data = bike_train) |>
+  step_dummy(owners) |>
+  step_interact(~log_km_driven:starts_with("owner") + log_km_driven:year + starts_with("owner"):year)
+#workflow setup
+MLR_wkf3 <- workflow() |>
+  add_recipe(MLR_recipe3) |>
+  add_model(MLR_spec)
+#fit model on full training data
+MLR_final <-  MLR_wkf3 |>
+  last_fit(bike_split)
+```
+
+**LASSO Model**
+
+```         
+#set up how we'll fit our LASSO model
+LASSO_spec <- linear_reg(penalty = tune(), mixture = 1) |>
+  set_engine("glmnet")
+#define the model
+LASSO_recipe <- recipe(log_selling_price ~ log_km_driven + owners + year, 
+                      data = bike_train) |>
+  step_dummy(owners) |>
+  step_normalize(log_km_driven, year)
+#workflow setup
+LASSO_wkf <- workflow() |>
+  add_recipe(LASSO_recipe) |>
+  add_model(LASSO_spec)
+#find the best tuning parameter
+LASSO_grid <- LASSO_wkf |>
+  tune_grid(resamples = bike_CV_folds,
+            grid = grid_regular(penalty(), levels = 200)) 
+```
+
+```         
+→ A | warning: A correlation computation is required, but `estimate` is constant and has 0
+               standard deviation, resulting in a divide by 0 error. `NA` will be returned.
+```
+
+```         
+There were issues with some computations   A: x8
+```
+
+```         
+There were issues with some computations   A: x16
+```
+
+```         
+There were issues with some computations   A: x24
+```
+
+```         
+There were issues with some computations   A: x32
+```
+
+```         
+There were issues with some computations   A: x40
+```
+
+```         
+There were issues with some computations   A: x48
+```
+
+```         
+There were issues with some computations   A: x64
+```
+
+```         
+There were issues with some computations   A: x72
+```
+
+```         
+There were issues with some computations   A: x80
+There were issues with some computations   A: x80
+```
+
+```         
+```
+
+```         
+#finalize the workflow and find the best model on the training set
+LASSO_final <- LASSO_wkf |>
+  finalize_workflow(LASSO_grid |>
+                      select_best(metric = "rmse")) |>
+  last_fit(bike_split)
+```
+
+Great - now we can compare our models on the test set!
+
+```         
+rbind(
+  MLR_final |>
+    collect_metrics() |> 
+    mutate(Model = "MLR", .before = ".metric"), 
+  LASSO_final |>
+    collect_metrics() |> 
+    mutate(Model = "LASSO", .before = ".metric"), 
+  tree_final_fit |>
+    collect_metrics() |> 
+    mutate(Model = "TREE", .before = ".metric")
+)
+```
+
+```         
+# A tibble: 6 × 5
+  Model .metric .estimator .estimate .config        
+  <chr> <chr>   <chr>          <dbl> <chr>          
+1 MLR   rmse    standard       0.546 pre0_mod0_post0
+2 MLR   rsq     standard       0.483 pre0_mod0_post0
+3 LASSO rmse    standard       0.557 pre0_mod0_post0
+4 LASSO rsq     standard       0.473 pre0_mod0_post0
+5 TREE  rmse    standard       0.565 pre0_mod0_post0
+6 TREE  rsq     standard       0.445 pre0_mod0_post0
+```
+
+We see that the best model (by RMSE) is the MLR model!
+
+#### 10. Fit the Best Model on the Full Data Set
+
+Now fit the MLR model to the entire data set. No tuning parameters here to worry about so this is pretty easy.
+
+```         
+final_model <- MLR_wkf3 |>
+  fit(bike_data) 
+tidy(final_model)
+```
+
+```         
+# A tibble: 7 × 5
+  term                            estimate std.error statistic       p.value
+  <chr>                              <dbl>     <dbl>     <dbl>         <dbl>
+1 (Intercept)                   -127.       79.6        -1.60  0.110        
+2 log_km_driven                    6.56      7.82        0.839 0.402        
+3 year                             0.0709    0.0396      1.79  0.0738       
+4 owners_single                 -126.       20.8        -6.07  0.00000000179
+5 log_km_driven_x_owners_single    0.281     0.0616      4.57  0.00000555   
+6 log_km_driven_x_year            -0.00348   0.00389    -0.895 0.371        
+7 owners_single_x_year             0.0613    0.0103      5.97  0.00000000333
+```
+
+## **Classification Trees**
+
+Classification trees are very similar to regression trees except, of course, our response is a categorical variable. This means that we don’t use the same loss functions nor metrics, but we still
+
+- split the predictor space up into regions
+
+- make our prediction based on which bin an observation ends up in
+
+- most often, we use the most prevalent class in a bin as our prediction
+
+## **Recap and Pros & Cons**
+
+- Trees are a nonlinear model that can be more flexible than linear models.
+
+Pros:
+
+- Simple to understand and easy to interpret output
+
+- Predictors don’t need to be scaled. Unlike algorithms like the LASSO, having all the predictors on different scales makes no difference in the choosing of regions.
+
+- No statistical assumptions necessary to get the fit (although this is true for least squares regression as well)
+
+- Built in variable selection based on the algorithm!
+
+Cons:
+
+- Small changes in data can vastly change tree
+
+  - The lack of ‘sharing’ information with nearby data points makes this algorithm more variable. Given a new data set from the same situation, the splits we get for the tree can differ quite a bit! That isn’t ideal as we’d like to have stable results across data sets collected on the same population.
+
+- No optimal algorithm for choosing splits exists.
+
+  - We saw the use of a greedy algorithm to select our regions in the regression tree case. This is a greedy algorithm because it is only looking one step ahead to find the best split. There might be a split at this step that creates a great future split. However, we may never find it because we only ever look at the best thing we can do at the current split!
+
+- Need to prune or use CV to determine the model.
+
+  - With MLR models, CV isn’t used at all. However, here we really need to prune the tree and/or use CV to figure out the optimal size of the tree to build!
+
+# Ensemble Trees
+
+## Recap
+
+Looked at a few common supervised learning models for regression and classification tasks
+
+- MLR, Penalized MLR, & Regression Trees
+
+- Logistic Regression & Classification Trees
+
+Now we'll investigate commonly used *ensemble* methods
+
+## Prediction with Tree Based Methods
+
+If we care mostly about prediction not interpretation
+
+- Often use **bootstrapping** to get multiple samples to fit on
+
+- Can average across many fitted trees
+
+- Decreases variance over an individual tree fit
+
+Major ensemble tree methods
+
+1.  Bagging (boostrap aggregation)
+
+2.  Random Forests (extends idea of bagging - includes bagging as a special case)
+
+3.  Boosting (*slow* training of trees)
+
+## Bagging
+
+Bagging = Bootstrap Aggregation - a general method
+
+Bootstrapping
+
+- resample from the data (non-parametric) or a fitted model (parameteric)
+
+- for non-parameteric
+
+  - treats sample as population
+
+  - resampling done with replacement
+
+  - can get same observation multiple times
+
+- method or estimation applied to each resample
+
+- traditionally used to obtain standard errors (measures of variability) or construct confidence intervals
+
+- Create many bootstrap (re)samples, $j=1,...,B$
+
+- Fit tress to each (re)sample
+
+  - Have $B$ fitted trees
+
+- For a given set of predictor values, find \^y for each tree
+
+  - Call prediction for a given set of $x$ values $\hat{y}^{∗j}(x)$
+
+- Combine the predictions from the trees to create the final prediction!
+
+  - For regression trees, usually use the average of the predictions
+
+  - For classification trees, usually use the **majority vote**
+
+## Using `tidymodels` to Fit a Bagged Tree Model
+
+- Read in our heart disease data
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+heart_data <- read_csv("https://www4.stat.ncsu.edu/online/datasets/heart.csv") |>
+  filter(RestingBP > 0) #remove one value
+heart_data <- heart_data |> mutate(HeartDisease = factor(HeartDisease))
+heart_split <- initial_split(heart_data, prop = 0.8)
+heart_train <- training(heart_split)
+heart_test <- testing(heart_split)
+heart_CV_folds <- vfold_cv(heart_train, 10)
+heart_data
+```
+
+- Recall: For tree based methods we don't need to worry about interactions
+
+- Can reuse the recipes from previous!
+
+```{r}
+LR3_rec <- recipe(HeartDisease ~ Age + Sex + ChestPainType + RestingBP + RestingECG + MaxHR + ExerciseAngina, 
+                  data = heart_train) |>
+  step_normalize(all_numeric(), -HeartDisease) |>
+  step_dummy(Sex, ChestPainType, RestingECG, ExerciseAngina)
+LR3_rec |> 
+  prep(heart_train) |> 
+  bake(heart_train) |> 
+  colnames()
+```
+
+- Now set up our model type and engine
+
+- Using [this parsnip](https://parsnip.tidymodels.org//reference/details_bag_tree_rpart.html) model
+
+  - Could tune on a few things here if we'd like
+
+```{r}
+bag_spec <- bag_tree(tree_depth = 5, min_n = 10, cost_complexity = tune()) |>
+  set_engine("rpart") |>
+  set_mode("classification")
+```
+
+- Create our workflows
+
+```{r}
+#install baguette package if not already done!
+library(baguette)
+bag_wkf <- workflow() |>
+  add_recipe(LR3_rec) |>
+  add_model(bag_spec)
+```
+
+- Fit to our CV folds!
+
+  - Note: CV isn't really necessary. We could use out-of-bag observations to determine how well our model works instead!
+
+```{r}
+bag_fit <- bag_wkf |>
+  tune_grid(resamples = heart_CV_folds, 
+            grid = grid_regular(cost_complexity(),
+                                levels = 15),
+            metrics = metric_set(accuracy, mn_log_loss))
+bag_fit
+```
+
+- Check our metrics across the folds!
+
+- Look at log loss and sort it
+
+```{r}
+bag_fit |>
+  collect_metrics() |>
+  filter(.metric == "mn_log_loss") |> 
+  arrange(mean)
+```
+
+- Get our best tuning parameter
+
+```{r}
+bag_best_params <- select_best(bag_fit, metric = "mn_log_loss")
+bag_best_params
+```
+
+- Refit on the entire training set using this tuning parameter
+
+```{r}
+bag_final_wkf <- bag_wkf |>
+  finalize_workflow(bag_best_params)
+bag_final_fit <- bag_final_wkf |>
+  last_fit(heart_split, metrics = metric_set(accuracy, mn_log_loss))
+```
+
+- For comparison, let's fit our same logistic regression model from previous
+
+```{r}
+LR_spec <- logistic_reg() |>
+  set_engine("glm")
+LR3_wkf <- workflow() |>
+  add_recipe(LR3_rec) |>
+  add_model(LR_spec)
+LR3_fit <- LR3_wkf |>
+  fit_resamples(heart_CV_folds, metrics = metric_set(accuracy, mn_log_loss))
+rbind(LR3_fit |> collect_metrics(),
+      bag_fit |> collect_metrics() |>
+        filter(cost_complexity == bag_best_params$cost_complexity) |> 
+        select(-cost_complexity))
+```
+
+- Take these models to the test set and see how they do
+
+```{r}
+LR_final_fit <- LR3_wkf |>
+  last_fit(heart_split, metrics = metric_set(accuracy, mn_log_loss)) 
+LR_final_fit |> collect_metrics()
+
+bag_final_fit |> collect_metrics()
+```
+
+- As before, we can extract our final model and check it out
+
+- Let's first refit to the entire data set
+
+```{r}
+bag_full_fit <- bag_final_wkf |>
+  fit(heart_data)
+bag_full_fit
+```
+
+- Extract the final model and then plot the variable importance
+
+```{r}
+bag_final_model <- extract_fit_engine(bag_full_fit) 
+bag_final_model$imp |>
+  mutate(term = factor(term, levels = term)) |>
+  ggplot(aes(x = term, y = value)) + 
+  geom_bar(stat ="identity") +
+  coord_flip()
+```
+
+# Random Forests
+
+- Uses same idea as bagging
+
+- Create multiple trees from bootstrap samples
+
+- Average results in some way for final prediction
+
+Difference:
+
+- Doesn't use all predictors at each step!
+
+- Considers splits using a random subset of predictors each time (# is a tuning parameter)
+
+But why?
+
+- If a really strong predictor exists, every bootstrap tree will probably use it for the first split (2nd split, etc.)
+
+- Makes bagged trees predictions more correlated
+
+- Correlation --\> smaller reduction in variance from aggregation
+
+# Using `tidymodels` to Fit a Random Forest Model
+
+By randomly selecting a subset of predictors, a good predictor or two won't dominate the tree fits
+
+- Rules of thumb exist for the number to use but better to use CV!
+
+- Let's use the same recipe but fit a random forest model
+
+```{r}
+rf_spec <- rand_forest(mtry = tune()) |>
+  set_engine("ranger") |>
+  set_mode("classification")
+```
+
+- Create our workflows
+
+```{r}
+rf_wkf <- workflow() |>
+  add_recipe(LR3_rec) |>
+  add_model(rf_spec)
+```
+
+- Fit to our CV folds!
+
+  - Note: CV isn't really necessary. We could use out-of-bag observations to determine how well our model works instead!
+
+```{r}
+rf_fit <- rf_wkf |>
+  tune_grid(resamples = heart_CV_folds, 
+            grid = 7,
+            metrics = metric_set(accuracy, mn_log_loss))
+```
+
+- Check our metrics across the folds!
+
+- Look at log loss and sort it
+
+```{r}
+rf_fit |>
+  collect_metrics() |>
+  filter(.metric == "mn_log_loss") |> 
+  arrange(mean)
+```
+
+- Get our best tuning parameter
+
+```{r}
+rf_best_params <- select_best(rf_fit, metric = "mn_log_loss")
+rf_best_params
+```
+
+- Refit on the entire training set using this tuning parameter
+
+```{r}
+rf_final_wkf <- rf_wkf |>
+  finalize_workflow(rf_best_params)
+rf_final_fit <- rf_final_wkf |>
+  last_fit(heart_split, metrics = metric_set(accuracy, mn_log_loss))
+```
+
+## Compare our Models on the Test Set
+
+- Random Forest model does better than bagging! Could tune more parameters to possibly improve
+
+```{r}
+LR_final_fit |> collect_metrics()
+
+bag_final_fit |> collect_metrics()
+
+rf_final_fit |> collect_metrics()
+```
+
+# Recap
+
+Averaging many trees can greatly improve prediction
+
+- Comes at a loss of interpretability
+
+- Variable importance measures can be used
+
+Bagging
+
+- Fit many trees on bootstrap samples and combine predictions in some way
+
+Random Forest
+
+- Do bagging but randomly select the predictors to use at each split

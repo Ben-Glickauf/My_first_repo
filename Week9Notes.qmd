@@ -947,7 +947,6 @@ bike_fit |>
  tidy()
 ```
 
-
 ## Find Test Set Metric(s)
 
 ```{r}
@@ -957,7 +956,6 @@ bike_wfl |>
 ```
 
 **The same transformations from the training set are used on the test set!**
-
 
 ## Fitting the Model with Cross-Validation
 
@@ -977,7 +975,6 @@ bike_CV_fits |>
 ```
 
 This is our CV error on the training set!
-
 
 ## Fit another Model with Cross-Validation for Comparison
 
@@ -1004,4 +1001,5 @@ rbind(bike_CV_fits |> collect_metrics(),
 
 - Simpler model is better here
 
-- Could now compare its perofrmance on the test set to some other 'best' models
+- Could now compare its performance on the test set to some other 'best' models
+
